@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "758105580720",
+    "project_id": "matchpro-4e12d",
+    "storage_bucket": "matchpro-4e12d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:758105580720:android:37ff138e581b3598e50775",
+        "android_client_info": {
+          "package_name": "com.matchpro.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAbHKj_WckhzJKG3WU9H5rnX_O1KHLK6Bg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
