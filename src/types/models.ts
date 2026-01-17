@@ -4,6 +4,7 @@ export interface User {
     id: string;
     email: string;
     displayName: string;
+    nickname?: string; // Added optional nickname
     photoURL?: string;
     role: UserRole;
     teamId?: string; // Link to the team they belong to
@@ -24,6 +25,8 @@ export interface Team {
     monthlyAmount?: number;
     billingDay?: number;
     members?: Record<string, 'owner' | 'coach' | 'staff' | 'player'>;
+    inviteToken?: string;
+    inviteLink?: string; // stored full URL
 }
 
 export interface GamePayment {
@@ -56,10 +59,14 @@ export interface MonthlyPayment {
 export interface Player {
     id: string; // Document ID in 'players' collection
     name: string;
+    nickname?: string; // Apelido
     photoURL?: string;
     position?: 'GK' | 'DEF' | 'MID' | 'FWD';
+    dominantFoot?: 'Destro' | 'Canhoto' | 'Ambidestro';
     status: 'active' | 'reserve';
     userId?: string; // Optional: Link to Auth User
+    authId?: string; // Legacy/Duplicate of userId
+    role?: 'owner' | 'coach' | 'staff' | 'player';
 
     // Stats (can be calculated or stored)
     overallRating?: number;
@@ -79,6 +86,13 @@ export interface Player {
         totalPaid: number;
         totalPending: number;
     };
+
+    // Financial Settings
+    paymentMode?: 'monthly' | 'per_game' | 'exempt';
+
+    // Ratings
+    fanRating?: number;
+    coachRating?: number;
 }
 
 

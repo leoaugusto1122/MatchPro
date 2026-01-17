@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList } from 'react-native';
-import { Text, FAB, List, Avatar, ActivityIndicator, useTheme } from 'react-native-paper';
+import { View, FlatList, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { Player } from '@/types/models';
+import { Plus, User, Target, Activity, Star, Shield } from 'lucide-react-native';
+
+import { Header } from '@/components/ui/Header';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 
 export default function RosterScreen({ navigation }: any) {
-    const theme = useTheme();
     const teamId = useTeamStore(state => state.teamId);
     const { canManageRoster } = usePermissions();
 
@@ -25,6 +28,8 @@ export default function RosterScreen({ navigation }: any) {
             snapshot.forEach((doc) => {
                 list.push({ id: doc.id, ...doc.data() } as Player);
             });
+            // Sort by name for better presentation
+            list.sort((a, b) => a.name.localeCompare(b.name));
             setPlayers(list);
             setLoading(false);
         }, (error) => {
@@ -50,80 +55,99 @@ export default function RosterScreen({ navigation }: any) {
     };
 
     const renderItem = ({ item }: { item: Player }) => (
-        <List.Item
-            title={item.name}
-            description={item.status === 'active' ? 'Ativo' : 'Reserva'}
-            left={props => (
-                <Avatar.Text
-                    {...props}
-                    size={40}
-                    label={item.name.substring(0, 2).toUpperCase()}
-                    style={{ backgroundColor: item.status === 'active' ? theme.colors.primary : theme.colors.surfaceVariant }}
-                />
-            )}
-            right={props => (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ marginRight: 10, fontWeight: 'bold' }}>{getPositionAbbr(item.position)}</Text>
-                    <List.Icon {...props} icon="chevron-right" />
+        <Card className="mb-3 border-0 shadow-sm" onTouchEnd={() => {
+            navigation.navigate('PlayerDetails', { playerId: item.id, mode: 'view' });
+        }}>
+            <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center flex-1">
+                    {/* Avatar */}
+                    <View className={`w-12 h-12 rounded-2xl items-center justify-center mr-4 ${item.status === 'active' ? 'bg-slate-900' : 'bg-slate-100'}`}>
+                        <Text className={`font-black italic ${item.status === 'active' ? 'text-white' : 'text-slate-400'}`}>
+                            {item.name.substring(0, 2).toUpperCase()}
+                        </Text>
+                    </View>
+
+                    <View className="flex-1">
+                        <Text className="font-bold text-slate-800 text-lg" numberOfLines={1}>{item.name}</Text>
+                        <View className="flex-row items-center gap-2 mt-1 flex-wrap">
+                            <Badge
+                                label={getPositionAbbr(item.position)}
+                                color="bg-slate-100"
+                                textColor="text-slate-500"
+                            />
+                            {/* Mini Stats */}
+                            <View className="flex-row items-center bg-slate-50 px-2 py-1 rounded-md">
+                                <Target size={10} color="#64748B" />
+                                <Text className="ml-1 text-[10px] font-bold text-slate-600">{item.goals || 0}</Text>
+                            </View>
+                            <View className="flex-row items-center bg-slate-50 px-2 py-1 rounded-md">
+                                <Activity size={10} color="#64748B" />
+                                <Text className="ml-1 text-[10px] font-bold text-slate-600">{item.matchesPlayed || 0}J</Text>
+                            </View>
+                            {(item.fanRating || 0) > 0 && (
+                                <View className="flex-row items-center bg-yellow-50 px-2 py-1 rounded-md">
+                                    <Star size={10} color="#CA8A04" fill="#CA8A04" />
+                                    <Text className="ml-1 text-[10px] font-bold text-yellow-700">{item.fanRating?.toFixed(1)}</Text>
+                                </View>
+                            )}
+                            {(item.coachRating || 0) > 0 && (
+                                <View className="flex-row items-center bg-blue-50 px-2 py-1 rounded-md">
+                                    <Shield size={10} color="#2563EB" fill="#2563EB" />
+                                    <Text className="ml-1 text-[10px] font-bold text-blue-700">{item.coachRating?.toFixed(1)}</Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
                 </View>
-            )}
-            onPress={() => {
-                navigation.navigate('PlayerDetails', { playerId: item.id, mode: canManageRoster ? 'edit' : 'view' });
-            }}
-        />
+
+                {/* Overall - requested */}
+                <View className="items-end ml-4">
+                    <Text className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">OVR</Text>
+                    <Text className="text-xl font-black italic text-[#006400]">
+                        {item.overallRating ? item.overallRating.toFixed(0) : '-'}
+                    </Text>
+                </View>
+            </View>
+        </Card>
     );
 
     if (loading) {
         return (
-            <View style={styles.center}>
-                <ActivityIndicator size="large" />
+            <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
+                <ActivityIndicator size="large" color="#006400" />
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
+        <View className="flex-1 bg-[#F8FAFC] pt-12 px-5">
+            <Header title="ELENCO" subtitle={`${players.length} JOGADORES`} />
+
             <FlatList
                 data={players}
                 keyExtractor={item => item.id}
                 renderItem={renderItem}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                    <View style={styles.empty}>
-                        <Text>Nenhum jogador cadastrado.</Text>
+                    <View className="py-10 items-center">
+                        <User size={48} color="#CBD5E1" />
+                        <Text className="text-slate-400 mt-4 font-medium italic">Nenhum jogador cadastrado.</Text>
                     </View>
                 }
             />
 
             {canManageRoster && (
-                <FAB
-                    icon="plus"
-                    style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+                <TouchableOpacity
+                    className="absolute bottom-6 right-6 w-14 h-14 bg-[#006400] rounded-2xl items-center justify-center shadow-lg shadow-green-900/40 transform rotate-45"
                     onPress={handleAddPlayer}
-                    color="white"
-                />
+                    activeOpacity={0.8}
+                >
+                    <View className="transform -rotate-45">
+                        <Plus size={24} color="white" />
+                    </View>
+                </TouchableOpacity>
             )}
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f5f5f5',
-    },
-    center: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    empty: {
-        padding: 20,
-        alignItems: 'center',
-    },
-    fab: {
-        position: 'absolute',
-        margin: 16,
-        right: 0,
-        bottom: 0,
-    },
-});

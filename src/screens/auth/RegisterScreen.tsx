@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { Text, TextInput, Button, HelperText } from 'react-native-paper';
+import { View, TouchableOpacity, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth, db } from '@/services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
+import { User, Mail, Lock, ChevronLeft, UserPlus } from 'lucide-react-native';
+
+import { Header } from '@/components/ui/Header';
+import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
 export default function RegisterScreen({ navigation }: any) {
     const [name, setName] = useState('');
@@ -13,25 +16,26 @@ export default function RegisterScreen({ navigation }: any) {
     const [error, setError] = useState('');
 
     const handleRegister = async () => {
+        if (!name || !email || !password) {
+            setError('Preencha todos os campos.');
+            return;
+        }
+
         setLoading(true);
         setError('');
 
         try {
-            // 1. Create User in Auth
             const userCredential = await createUserWithEmailAndPassword(auth, email, password);
             const user = userCredential.user;
 
-            // 2. Update Display Name
             await updateProfile(user, { displayName: name });
 
-            // 3. Create User Document in Firestore
             await setDoc(doc(db, 'users', user.uid), {
                 email: user.email,
                 displayName: name,
-                role: 'owner', // First user is owner by default for MVP logic
+                role: 'owner',
                 createdAt: new Date(),
             });
-
         } catch (e: any) {
             setError(e.message);
             setLoading(false);
@@ -39,73 +43,87 @@ export default function RegisterScreen({ navigation }: any) {
     };
 
     return (
-        <View style={styles.container}>
-            <Text variant="headlineMedium" style={styles.title}>Crie sua conta</Text>
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            className="flex-1 bg-[#F8FAFC]"
+        >
+            <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24, paddingVertical: 60 }}>
+                <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center mb-8">
+                    <ChevronLeft size={20} color="#94A3B8" />
+                    <Text className="ml-2 font-black italic text-slate-400 uppercase tracking-widest text-[10px]">Voltar para login</Text>
+                </TouchableOpacity>
 
-            <TextInput
-                label="Nome Completo"
-                value={name}
-                onChangeText={setName}
-                mode="outlined"
-                style={styles.input}
-            />
+                <View className="mb-12">
+                    <Header title="CADASTRO" subtitle="Comece sua Jornada Elite" />
+                    <Text className="text-slate-400 font-medium italic mt-2">Crie sua conta gratuita em segundos e revolucione a gestão do seu time.</Text>
+                </View>
 
-            <TextInput
-                label="Email"
-                value={email}
-                onChangeText={setEmail}
-                mode="outlined"
-                autoCapitalize="none"
-                style={styles.input}
-            />
+                <View className="gap-6">
+                    {/* Name Input */}
+                    <View>
+                        <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2 ml-1">NOME COMPLETO</Text>
+                        <View className="flex-row items-center bg-white border border-slate-100 rounded-2xl px-5 py-2 shadow-sm">
+                            <User size={18} color="#94A3B8" />
+                            <TextInput
+                                className="flex-1 ml-3 h-12 text-slate-900 font-bold"
+                                value={name}
+                                onChangeText={setName}
+                                placeholder="Seu nome"
+                                placeholderTextColor="#CBD5E1"
+                            />
+                        </View>
+                    </View>
 
-            <TextInput
-                label="Senha"
-                value={password}
-                onChangeText={setPassword}
-                mode="outlined"
-                secureTextEntry
-                style={styles.input}
-            />
+                    {/* Email Input */}
+                    <View>
+                        <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2 ml-1">EMAIL PROFISSIONAL</Text>
+                        <View className="flex-row items-center bg-white border border-slate-100 rounded-2xl px-5 py-2 shadow-sm">
+                            <Mail size={18} color="#94A3B8" />
+                            <TextInput
+                                className="flex-1 ml-3 h-12 text-slate-900 font-bold"
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                                placeholder="seu@email.com"
+                                placeholderTextColor="#CBD5E1"
+                            />
+                        </View>
+                    </View>
 
-            {error ? <HelperText type="error">{error}</HelperText> : null}
+                    {/* Password Input */}
+                    <View>
+                        <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2 ml-1">SENHA SEGURA</Text>
+                        <View className="flex-row items-center bg-white border border-slate-100 rounded-2xl px-5 py-2 shadow-sm">
+                            <Lock size={18} color="#94A3B8" />
+                            <TextInput
+                                className="flex-1 ml-3 h-12 text-slate-900 font-bold"
+                                value={password}
+                                onChangeText={setPassword}
+                                secureTextEntry
+                                placeholder="••••••"
+                                placeholderTextColor="#CBD5E1"
+                            />
+                        </View>
+                    </View>
 
-            <Button
-                mode="contained"
-                onPress={handleRegister}
-                loading={loading}
-                style={styles.button}
-            >
-                Cadastrar
-            </Button>
+                    {error ? (
+                        <View className="bg-red-50 p-4 rounded-xl border border-red-100">
+                            <Text className="text-red-600 text-xs font-bold text-center">{error}</Text>
+                        </View>
+                    ) : null}
 
-            <Button
-                mode="text"
-                onPress={() => navigation.goBack()}
-            >
-                Voltar para Login
-            </Button>
-        </View>
+                    <ButtonPrimary
+                        label={loading ? "CRIANDO CONTA..." : "CRIAR CONTA AGORA"}
+                        onPress={handleRegister}
+                        disabled={loading}
+                    />
+
+                    <Text className="text-slate-400 text-center font-medium italic text-xs mt-4">
+                        Ao se cadastrar, você concorda com nossos Termos de Uso e Política de Privacidade.
+                    </Text>
+                </View>
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        padding: 20,
-        justifyContent: 'center',
-        backgroundColor: '#fff',
-    },
-    title: {
-        textAlign: 'center',
-        marginBottom: 30,
-        fontWeight: 'bold',
-    },
-    input: {
-        marginBottom: 12,
-    },
-    button: {
-        marginTop: 10,
-        paddingVertical: 6,
-    },
-});

@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList } from 'react-native';
-import { Text, FAB, Card, Chip, SegmentedButtons, ActivityIndicator, useTheme } from 'react-native-paper';
+import { View, FlatList, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
@@ -8,9 +7,13 @@ import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { Match } from '@/types/models';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { Calendar, MapPin, Plus, Clock } from 'lucide-react-native';
+
+import { Header } from '@/components/ui/Header';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 
 export default function MatchesScreen({ navigation }: any) {
-    const theme = useTheme();
     const teamId = useTeamStore(state => state.teamId);
     const { canManageMatches } = usePermissions();
 
@@ -57,124 +60,91 @@ export default function MatchesScreen({ navigation }: any) {
     };
 
     const renderItem = ({ item }: { item: Match }) => (
-        <Card
-            style={styles.card}
-            onPress={() => navigation.navigate('MatchDetails', { matchId: item.id, mode: 'view' })}
-        >
-            <Card.Content>
-                <View style={styles.cardHeader}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>vs {item.opponent || 'Adversário'}</Text>
-                    <Chip compact mode="outlined">{item.status === 'finished' ? 'Finalizada' : 'Agendada'}</Chip>
-                </View>
-
-                <Text variant="bodyMedium" style={{ marginTop: 5 }}>
-                    {format(item.date, "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+        <Card className="mb-4" onTouchEnd={() => navigation.navigate('MatchDetails', { matchId: item.id, mode: 'view' })}>
+            <View className="flex-row justify-between mb-2">
+                <Badge
+                    label={item.status === 'finished' ? 'FINALIZADA' : (item.status === 'scheduled' ? 'AGENDADA' : 'CANCELADA')}
+                    color={item.status === 'finished' ? 'bg-slate-900' : (item.status === 'canceled' ? 'bg-red-100' : 'bg-emerald-100')}
+                    textColor={item.status === 'finished' ? 'text-white' : (item.status === 'canceled' ? 'text-red-600' : 'text-emerald-800')}
+                />
+                <Text className="text-xs font-bold text-slate-400">
+                    {format(item.date, "dd MMM HH:mm", { locale: ptBR }).toUpperCase()}
                 </Text>
+            </View>
 
-                <Text variant="bodySmall" style={{ color: '#666' }}>
-                    {item.location || 'Local a definir'}
+            <View className="flex-row items-center justify-between mt-2">
+                <Text className="text-xl font-black italic text-slate-800 uppercase flex-1">
+                    VS {item.opponent || 'Adversário'}
                 </Text>
 
                 {item.status === 'finished' && (
-                    <View style={styles.scoreContainer}>
-                        <Text variant="headlineMedium" style={{ color: theme.colors.primary }}>{item.scoreHome}</Text>
-                        <Text variant="titleLarge"> x </Text>
-                        <Text variant="headlineMedium" style={{ color: theme.colors.error }}>{item.scoreAway}</Text>
+                    <View className="bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">
+                        <Text className="text-2xl font-black italic text-slate-900">
+                            {item.scoreHome} - {item.scoreAway}
+                        </Text>
                     </View>
                 )}
-            </Card.Content>
+            </View>
+
+            <View className="flex-row items-center mt-3">
+                <MapPin size={12} color="#94A3B8" />
+                <Text className="text-xs font-bold text-slate-500 ml-1 uppercase">{item.location || 'Local a definir'}</Text>
+            </View>
         </Card>
     );
 
+    if (loading) {
+        return (
+            <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
+                <ActivityIndicator size="large" color="#006400" />
+            </View>
+        );
+    }
+
     return (
-        <View style={styles.container}>
-            <View style={styles.filterContainer}>
-                <SegmentedButtons
-                    value={viewMode}
-                    onValueChange={setViewMode}
-                    buttons={[
-                        { value: 'upcoming', label: 'Próximas' },
-                        { value: 'past', label: 'Resultados' },
-                    ]}
-                />
+        <View className="flex-1 bg-[#F8FAFC] pt-12 px-5">
+            <Header title="PARTIDAS" subtitle="Agenda de Jogos" />
+
+            <View className="flex-row bg-white p-1 rounded-2xl border border-slate-100 mb-6">
+                <TouchableOpacity
+                    className={`flex-1 py-3 rounded-xl items-center ${viewMode === 'upcoming' ? 'bg-slate-900' : 'bg-transparent'}`}
+                    onPress={() => setViewMode('upcoming')}
+                >
+                    <Text className={`font-bold text-xs uppercase tracking-widest ${viewMode === 'upcoming' ? 'text-white' : 'text-slate-400'}`}>Próximas</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    className={`flex-1 py-3 rounded-xl items-center ${viewMode === 'past' ? 'bg-slate-900' : 'bg-transparent'}`}
+                    onPress={() => setViewMode('past')}
+                >
+                    <Text className={`font-bold text-xs uppercase tracking-widest ${viewMode === 'past' ? 'text-white' : 'text-slate-400'}`}>Resultados</Text>
+                </TouchableOpacity>
             </View>
 
-            {loading ? (
-                <View style={styles.center}>
-                    <ActivityIndicator size="large" />
-                </View>
-            ) : (
-                <FlatList
-                    data={matches}
-                    keyExtractor={item => item.id}
-                    renderItem={renderItem}
-                    contentContainerStyle={styles.list}
-                    ListEmptyComponent={
-                        <View style={styles.empty}>
-                            <Text>Nenhuma partida encontrada.</Text>
-                        </View>
-                    }
-                />
-            )}
+            <FlatList
+                data={matches}
+                keyExtractor={item => item.id}
+                renderItem={renderItem}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                    <View className="py-10 items-center">
+                        <Clock size={48} color="#CBD5E1" />
+                        <Text className="text-slate-400 mt-4 font-medium italic">Nenhuma partida encontrada.</Text>
+                    </View>
+                }
+            />
 
             {canManageMatches && (
-                <FAB
-                    icon="plus"
-                    style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+                <TouchableOpacity
+                    className="absolute bottom-6 right-6 w-14 h-14 bg-[#006400] rounded-2xl items-center justify-center shadow-lg shadow-green-900/40 transform rotate-45"
                     onPress={handleAddMatch}
-                    color="white"
-                />
+                    activeOpacity={0.8}
+                >
+                    <View className="transform -rotate-45">
+                        <Plus size={24} color="white" />
+                    </View>
+                </TouchableOpacity>
             )}
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f5f5f5',
-    },
-    center: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    list: {
-        padding: 16,
-        paddingBottom: 80,
-    },
-    card: {
-        marginBottom: 12,
-        backgroundColor: 'white',
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    scoreContainer: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 10,
-        backgroundColor: '#f0f0f0',
-        padding: 5,
-        borderRadius: 8,
-    },
-    filterContainer: {
-        padding: 16,
-        backgroundColor: 'white',
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-    },
-    empty: {
-        padding: 20,
-        alignItems: 'center',
-    },
-    fab: {
-        position: 'absolute',
-        margin: 16,
-        right: 0,
-        bottom: 0,
-    },
-});

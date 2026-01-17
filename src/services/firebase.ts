@@ -11,7 +11,8 @@ import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuração do Firebase usando variáveis de ambiente do Expo (EXPO_PUBLIC_)
 // Isso garante que as chaves sejam embutidas no bundle de forma segura durante o build.
-const firebaseConfig = {
+// Export needed for deep path construction
+export const firebaseConfig = {
     apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
     authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
     projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,

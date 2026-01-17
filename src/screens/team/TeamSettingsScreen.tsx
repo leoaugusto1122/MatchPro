@@ -1,89 +1,184 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Appbar, TextInput, Button, RadioButton, Text, HelperText, Card, Chip } from 'react-native-paper';
+import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, Share, Image } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useTeamStore } from '@/stores/teamStore';
-import { useNavigation } from '@react-navigation/native';
-import { doc, updateDoc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
-import { db } from '@/services/firebase';
-import { Team } from '@/types/models';
+import { doc, updateDoc, getDoc, collection, query, getDocs, deleteField, arrayRemove, deleteDoc, setDoc } from 'firebase/firestore';
+import { db, firebaseConfig } from '@/services/firebase';
+import { Team, Player } from '@/types/models';
+import { ChevronLeft, DollarSign, Calendar, Wallet, LogOut, Copy, Share2, Users, Trash2, Hash, RefreshCw } from 'lucide-react-native';
 
-export default function TeamSettingsScreen() {
-    const navigation = useNavigation();
-    const { teamId, currentRole } = useTeamStore();
+import { Header } from '@/components/ui/Header';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
+// import { useAuthStore } from '@/stores/authStore'; // Unused
 
-    // Local Team Data
+export default function TeamSettingsScreen({ navigation }: any) {
+    const { teamId, currentRole, clearTeamContext } = useTeamStore();
+
+    // Unused
+    // const { user } = useAuthStore();
+
     const [team, setTeam] = useState<Team | null>(null);
+    const [players, setPlayers] = useState<Player[]>([]);
 
-    // Form State
+    // Finance
     const [billingMode, setBillingMode] = useState<'PER_GAME' | 'MONTHLY' | 'MONTHLY_PLUS_GAME'>('PER_GAME');
     const [perGameAmount, setPerGameAmount] = useState('');
     const [monthlyAmount, setMonthlyAmount] = useState('');
     const [billingDay, setBillingDay] = useState('');
     const [loading, setLoading] = useState(false);
-    const [monthlyGenerated, setMonthlyGenerated] = useState(false);
 
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const currentMonthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    // Unused monthly check logic can be removed or kept if planned for future
+    // const [monthlyGenerated, setMonthlyGenerated] = useState(false);
+
+    // const currentMonthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
     useEffect(() => {
-        const fetchTeam = async () => {
+        const fetchTeamData = async () => {
             if (!teamId) return;
             try {
+                // Team Doc
                 const teamDoc = await getDoc(doc(db, 'teams', teamId));
                 if (teamDoc.exists()) {
                     const data = teamDoc.data() as Team;
                     setTeam({ ...data, id: teamDoc.id });
-
                     if (data.billingMode) setBillingMode(data.billingMode);
                     if (data.perGameAmount) setPerGameAmount(data.perGameAmount.toString());
                     if (data.monthlyAmount) setMonthlyAmount(data.monthlyAmount.toString());
                     if (data.billingDay) setBillingDay(data.billingDay.toString());
                 }
+
+                // Players List
+                const qPlayers = query(collection(db, 'teams', teamId, 'players'));
+                const playersSnap = await getDocs(qPlayers);
+                const list = playersSnap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
+                setPlayers(list);
+
             } catch (e) {
-                console.error("Error fetching team settings", e);
+                console.error("Error fetching team data", e);
             }
         };
-        fetchTeam();
-
-        const checkMonthlyStatus = async () => {
-            if (!teamId) return;
-            const q = query(
-                collection(db, 'teams', teamId, 'monthlyPayments'),
-                where('month', '==', currentMonth),
-                limit(1)
-            );
-            const snap = await getDocs(q);
-            setMonthlyGenerated(!snap.empty);
-        };
-        checkMonthlyStatus();
-
+        fetchTeamData();
     }, [teamId]);
 
-    const handleSave = async () => {
-        if (!team) return;
-
-        // Ensure only owner can save
-        if (currentRole !== 'owner') {
-            Alert.alert('Permissão Negada', 'Apenas o dono do time pode alterar configurações financeiras.');
-            return;
-        }
-
-        if (billingMode !== team.billingMode) {
-            Alert.alert(
-                'Mudança de Modo de Cobrança',
-                'Alterar o modo de cobrança não afetará pagamentos já gerados. Deseja continuar?',
-                [
-                    { text: 'Cancelar', style: 'cancel' },
-                    { text: 'Confirmar', onPress: saveToFirestore }
-                ]
-            );
-        } else {
-            saveToFirestore();
+    const handleCopyCode = async () => {
+        if (team?.code) {
+            await Clipboard.setStringAsync(team.code);
+            Alert.alert('Sucesso', 'Código copiado!');
         }
     };
 
-    const saveToFirestore = async () => {
+    const handleShareLink = async () => {
+        if (team) {
+            // New Convite Link Structure
+            const url = team.inviteLink || `https://matchpro.app/convite/${team.id}`;
+            try {
+                await Share.share({
+                    message: `Partiu jogo? Entra no ${team.name} usando o código *${team.code || ''}* ou pelo link: ${url}`,
+                    url: url,
+                });
+            } catch (error) {
+                console.error(error);
+            }
+        }
+    };
+
+    const handleRotateInvite = () => {
+        Alert.alert(
+            'Redefinir Convites',
+            'Isso invalidará o código anterior e o link antigo continuará funcionando apenas se for baseado no ID (mas o código muda). Deseja continuar?',
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Gerar Novos',
+                    onPress: async () => {
+                        if (!team) return;
+                        setLoading(true);
+                        try {
+                            const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+                            const appId = firebaseConfig.appId;
+
+                            // 1. Update Core Data
+                            await updateDoc(doc(db, 'teams', team.id), {
+                                code: newCode
+                            });
+
+                            // 2. Sync to Public Artifact (Required for Search)
+                            if (appId) {
+                                const publicPath = `artifacts/${appId}/public/data/teams/${team.id}`;
+                                await setDoc(doc(db, publicPath), {
+                                    id: team.id,
+                                    inviteCode: newCode, // Changed from code to inviteCode per requirements
+                                    name: team.name,
+                                    status: 'active',
+                                    inviteLink: team.inviteLink || '',
+                                    updatedAt: new Date()
+                                }, { merge: true });
+                            }
+
+                            setTeam(prev => prev ? ({ ...prev, code: newCode }) : null);
+                            Alert.alert('Sucesso', 'Novo código de acesso gerado.');
+                        } catch (e) {
+                            Alert.alert('Erro', 'Falha ao gerar novo código.');
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleKickPlayer = async (player: Player) => {
         if (!team) return;
+
+        Alert.alert(
+            'Expulsar Jogador',
+            `Tem certeza que deseja remover ${player.nickname || player.name} do time? Essa ação não pode ser desfeita.`,
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Confirmar Expulsão',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setLoading(true);
+                        try {
+                            // 1. Remove from Team Members Map & Array
+                            const teamRef = doc(db, 'teams', team.id);
+
+                            // Prepare update object. If authId exists, use it to remove from map
+                            const updates: any = {
+                                memberIds: arrayRemove(player.userId || player.authId)
+                            };
+
+                            if (player.authId) {
+                                updates[`members.${player.authId}`] = deleteField();
+                            }
+
+                            await updateDoc(teamRef, updates);
+
+                            // 2. Delete Player Profile Document
+                            await deleteDoc(doc(db, 'teams', team.id, 'players', player.id));
+
+                            // Update UI
+                            setPlayers(prev => prev.filter(p => p.id !== player.id));
+                            Alert.alert('Removido', 'Jogador removido com sucesso.');
+
+                        } catch (error) {
+                            console.error(error);
+                            Alert.alert('Erro', 'Falha ao remover jogador.');
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleSaveFinance = async () => {
+        if (!team || currentRole !== 'owner') return;
         setLoading(true);
         try {
             const updates: Partial<Team> = {
@@ -92,196 +187,189 @@ export default function TeamSettingsScreen() {
                 monthlyAmount: monthlyAmount ? parseFloat(monthlyAmount) : 0,
                 billingDay: billingDay ? parseInt(billingDay) : 5,
             };
-
             await updateDoc(doc(db, 'teams', team.id), updates);
             Alert.alert('Sucesso', 'Configurações atualizadas!');
             navigation.goBack();
         } catch (error) {
-            console.error(error);
-            Alert.alert('Erro', 'Falha ao salvar configurações.');
+            Alert.alert('Erro', 'Falha ao salvar.');
         } finally {
             setLoading(false);
         }
     };
 
-    if (currentRole !== 'owner') {
-        return (
-            <View style={styles.container}>
-                <Appbar.Header>
-                    <Appbar.BackAction onPress={() => navigation.goBack()} />
-                    <Appbar.Content title="Configurações" />
-                </Appbar.Header>
-                <View style={styles.content}>
-                    <Text>Apenas o dono do time pode acessar esta tela.</Text>
-                </View>
-            </View>
+    const handleSwitchTeam = () => {
+        Alert.alert(
+            'Trocar de Time',
+            'Deseja voltar para a seleção de times?',
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Sair e Trocar',
+                    onPress: () => clearTeamContext()
+                }
+            ]
         );
-    }
+    };
 
     return (
-        <View style={styles.container}>
-            <Appbar.Header>
-                <Appbar.BackAction onPress={() => navigation.goBack()} />
-                <Appbar.Content title="Financeiro do Time" />
-            </Appbar.Header>
+        <ScrollView className="flex-1 bg-[#F8FAFC]" contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+            <View className="pt-12 px-6 pb-6 bg-white border-b border-slate-100 mb-6 shadow-sm">
+                <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center mb-6">
+                    <ChevronLeft size={20} color="#94A3B8" />
+                    <Text className="ml-1 font-black italic text-slate-400 uppercase tracking-widest text-[10px]">Voltar</Text>
+                </TouchableOpacity>
+                <Header title="CONFIGURAÇÕES" subtitle="Gestão do Clube" />
+            </View>
 
-            <ScrollView contentContainerStyle={styles.content}>
+            <View className="px-6 gap-6">
 
-                <Card style={styles.card}>
-                    <Card.Title title="Modo de Cobrança" subtitle="Como seu time arrecada dinheiro?" />
-                    <Card.Content>
-                        <RadioButton.Group onValueChange={value => setBillingMode(value as any)} value={billingMode}>
-                            <View style={styles.radioRow}>
-                                <RadioButton value="PER_GAME" />
-                                <Text style={styles.radioLabel}>Por Jogo</Text>
+                {/* Team Code & Invite - Owner Only */}
+                {currentRole === 'owner' && team && (
+                    <Card className="p-6">
+                        <View className="flex-row items-center justify-between mb-4">
+                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase">Passe de Acesso</Text>
+                            <View className="flex-row gap-2">
+                                <TouchableOpacity onPress={handleRotateInvite} className="bg-slate-100 p-2 rounded-full">
+                                    <RefreshCw size={14} color="#64748B" />
+                                </TouchableOpacity>
+                                <Badge label="ÚNICO" color="bg-blue-50" textColor="text-blue-500" />
                             </View>
-                            <HelperText type="info">Jogadores pagam apenas quando jogam.</HelperText>
+                        </View>
 
-                            <View style={styles.radioRow}>
-                                <RadioButton value="MONTHLY" />
-                                <Text style={styles.radioLabel}>Mensalidade Fixa</Text>
-                            </View>
-                            <HelperText type="info">Valor fixo todo mês, jogando ou não.</HelperText>
+                        <View className="bg-slate-900 rounded-2xl p-6 items-center mb-4 relative overflow-hidden">
+                            <Hash size={100} color="white" className="absolute -bottom-4 -right-4 opacity-5" />
+                            <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">CÓDIGO DO TIME</Text>
+                            <Text className="text-4xl font-black text-white tracking-widest">{team.code || '---'}</Text>
+                        </View>
 
-                            <View style={styles.radioRow}>
-                                <RadioButton value="MONTHLY_PLUS_GAME" />
-                                <Text style={styles.radioLabel}>Híbrido (Mensal + Jogo)</Text>
-                            </View>
-                            <HelperText type="info">Uma mensalidade base + taxa por partida jogada.</HelperText>
-                        </RadioButton.Group>
-                    </Card.Content>
-                </Card>
+                        <Text className="text-center text-xs text-slate-400 mb-4 px-4">
+                            Este código expira se você gerar um novo.
+                        </Text>
 
-                <Card style={styles.card}>
-                    <Card.Title title="Valores" />
-                    <Card.Content style={styles.inputContainer}>
-                        {(billingMode === 'PER_GAME' || billingMode === 'MONTHLY_PLUS_GAME') && (
-                            <TextInput
-                                label="Valor por Jogo (R$)"
-                                value={perGameAmount}
-                                onChangeText={setPerGameAmount}
-                                keyboardType="numeric"
-                                mode="outlined"
-                                left={<TextInput.Affix text="R$" />}
-                            />
-                        )}
+                        <View className="flex-row gap-3">
+                            <TouchableOpacity onPress={handleCopyCode} className="flex-1 bg-slate-100 py-3 rounded-xl flex-row items-center justify-center border border-slate-200">
+                                <Copy size={16} color="#475569" />
+                                <Text className="ml-2 font-black text-slate-600 text-[10px] uppercase">Copiar Código</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={handleShareLink} className="flex-1 bg-[#006400] py-3 rounded-xl flex-row items-center justify-center">
+                                <Share2 size={16} color="white" />
+                                <Text className="ml-2 font-black text-white text-[10px] uppercase">Enviar Convite</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Card>
+                )}
 
-                        {(billingMode === 'MONTHLY' || billingMode === 'MONTHLY_PLUS_GAME') && (
-                            <>
-                                <TextInput
-                                    label="Valor da Mensalidade (R$)"
-                                    value={monthlyAmount}
-                                    onChangeText={setMonthlyAmount}
-                                    keyboardType="numeric"
-                                    mode="outlined"
-                                    left={<TextInput.Affix text="R$" />}
-                                />
-                                <TextInput
-                                    label="Dia de Vencimento"
-                                    value={billingDay}
-                                    onChangeText={setBillingDay}
-                                    keyboardType="numeric"
-                                    mode="outlined"
-                                    placeholder="Ex: 5"
-                                />
-                            </>
-                        )}
-                    </Card.Content>
-                </Card>
+                {/* Roster Management - Owner Only */}
+                {currentRole === 'owner' && (
+                    <Card className="p-0 overflow-hidden">
+                        <View className="p-6 border-b border-slate-100 flex-row justify-between items-center">
+                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase">Elenco ({players.length})</Text>
+                            <Users size={16} color="#94A3B8" />
+                        </View>
+                        <View className="p-2">
+                            {players.map((player) => (
+                                <View key={player.id} className="flex-row items-center justify-between p-3 border-b border-slate-50 last:border-0">
+                                    <View className="flex-row items-center flex-1">
+                                        <View className="w-10 h-10 bg-slate-100 rounded-full items-center justify-center mr-3">
+                                            {player.photoURL ? (
+                                                <Image source={{ uri: player.photoURL }} className="w-10 h-10 rounded-full" />
+                                            ) : (
+                                                <Text className="font-bold text-slate-500">{player.name?.substring(0, 2).toUpperCase()}</Text>
+                                            )}
+                                        </View>
+                                        <View>
+                                            <Text className="text-slate-900 font-bold text-sm" numberOfLines={1}>{player.nickname || player.name}</Text>
+                                            <Text className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{player.role === 'owner' ? 'Dono / Capitão' : 'Jogador'}</Text>
+                                        </View>
+                                    </View>
 
-                <Button
-                    mode="contained"
-                    onPress={handleSave}
-                    loading={loading}
-                    style={styles.saveBtn}
-                >
-                    Salvar Configurações
-                </Button>
+                                    {player.role !== 'owner' && (
+                                        <TouchableOpacity
+                                            onPress={() => handleKickPlayer(player)}
+                                            className="p-2 bg-red-50 rounded-lg"
+                                        >
+                                            <Trash2 size={16} color="#EF4444" />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            ))}
+                        </View>
+                    </Card>
+                )}
 
-                {(billingMode === 'MONTHLY' || billingMode === 'MONTHLY_PLUS_GAME') && (
-                    <View style={{ marginTop: 20 }}>
-                        <Text variant="titleMedium" style={{ marginBottom: 5 }}>Cobranças Mensais</Text>
-                        <Text variant="bodyMedium">Mês Atual: <Text style={{ fontWeight: 'bold' }}>{currentMonthLabel}</Text></Text>
+                {/* Finance Settings - Owner Only */}
+                {currentRole === 'owner' && (
+                    <Card className="p-6">
+                        <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4">Financeiro</Text>
+                        <View className="gap-3">
+                            {[
+                                { id: 'PER_GAME', label: 'POR JOGO', desc: 'Paga apenas quando joga' },
+                                { id: 'MONTHLY', label: 'MENSALIDADE', desc: 'Valor fixo mensal' },
+                                { id: 'MONTHLY_PLUS_GAME', label: 'HÍBRIDO', desc: 'Mensalidade + Jogo' }
+                            ].map((m) => (
+                                <TouchableOpacity
+                                    key={m.id}
+                                    onPress={() => setBillingMode(m.id as any)}
+                                    className={`flex-row items-center p-4 rounded-2xl border ${billingMode === m.id ? 'bg-[#006400]/5 border-[#006400]' : 'bg-slate-50 border-slate-100'}`}
+                                >
+                                    <View className={`w-4 h-4 rounded-full border items-center justify-center ${billingMode === m.id ? 'border-[#006400]' : 'border-slate-300'}`}>
+                                        {billingMode === m.id && <View className="w-2 h-2 rounded-full bg-[#006400]" />}
+                                    </View>
+                                    <View className="ml-4 flex-1">
+                                        <Text className={`font-black italic text-xs uppercase tracking-widest ${billingMode === m.id ? 'text-[#006400]' : 'text-slate-500'}`}>{m.label}</Text>
+                                        <Text className="text-[9px] text-slate-400 font-medium">{m.desc}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
 
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, marginTop: 5 }}>
-                            <Text>Status: </Text>
-                            {monthlyGenerated ? (
-                                <Chip icon="check" mode="outlined" textStyle={{ color: 'green' }} style={{ borderColor: 'green' }}>Geradas</Chip>
-                            ) : (
-                                <Chip icon="clock" mode="outlined" textStyle={{ color: 'orange' }} style={{ borderColor: 'orange' }}>Pendentes</Chip>
+                        <View className="gap-4 mt-6">
+                            {(billingMode === 'PER_GAME' || billingMode === 'MONTHLY_PLUS_GAME') && (
+                                <View>
+                                    <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">VALOR POR JOGO</Text>
+                                    <View className="flex-row items-center bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
+                                        <DollarSign size={16} color="#94A3B8" />
+                                        <TextInput className="flex-1 ml-2 font-bold text-slate-900" value={perGameAmount} onChangeText={setPerGameAmount} keyboardType="numeric" placeholder="0.00" />
+                                    </View>
+                                </View>
+                            )}
+                            {(billingMode === 'MONTHLY' || billingMode === 'MONTHLY_PLUS_GAME') && (
+                                <>
+                                    <View>
+                                        <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">VALOR MENSALIDADE</Text>
+                                        <View className="flex-row items-center bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
+                                            <Wallet size={16} color="#94A3B8" />
+                                            <TextInput className="flex-1 ml-2 font-bold text-slate-900" value={monthlyAmount} onChangeText={setMonthlyAmount} keyboardType="numeric" placeholder="0.00" />
+                                        </View>
+                                    </View>
+                                    <View>
+                                        <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">DIA DO VENCIMENTO</Text>
+                                        <View className="flex-row items-center bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
+                                            <Calendar size={16} color="#94A3B8" />
+                                            <TextInput className="flex-1 ml-2 font-bold text-slate-900" value={billingDay} onChangeText={setBillingDay} keyboardType="numeric" placeholder="Ex: 5" />
+                                        </View>
+                                    </View>
+                                </>
                             )}
                         </View>
 
-                        <Button
-                            mode="outlined"
-                            onPress={async () => {
-                                if (!team) return;
-                                try {
-                                    setLoading(true);
-                                    // Dynamic import if needed or use imported service
-                                    const { BillingService } = require('@/services/billingService');
-                                    await BillingService.generateMonthlyPayments(team.id, currentMonth);
-                                    Alert.alert('Sucesso', 'Cobranças mensais geradas para jogadores ativos.');
-                                    setMonthlyGenerated(true);
-                                } catch (e) {
-                                    console.error(e);
-                                    Alert.alert('Erro', 'Falha ao gerar cobranças.');
-                                } finally {
-                                    setLoading(false);
-                                }
-                            }}
-                            style={{ borderColor: monthlyGenerated ? '#ccc' : '#2196F3' }}
-                            textColor={monthlyGenerated ? '#ccc' : '#2196F3'}
-                            disabled={loading || monthlyGenerated}
-                        >
-                            {monthlyGenerated ? "Mensalidades já geradas" : "Gerar mensalidades do mês atual"}
-                        </Button>
-                        <HelperText type="info">
-                            As mensalidades são geradas apenas uma vez por mês. Este processo não duplica cobranças.
-                        </HelperText>
-                    </View>
+                        <View className="mt-6">
+                            <ButtonPrimary label={loading ? "SALVANDO..." : "SALVAR FINANCEIRO"} onPress={handleSaveFinance} disabled={loading} />
+                        </View>
+                    </Card>
                 )}
 
-                <Text style={styles.note}>
-                    * Alterações no modo de cobrança não afetam pagamentos passados.
-                </Text>
-
-            </ScrollView>
-        </View>
+                {/* Switch Team Button */}
+                <Card className="p-6 border-red-100 bg-red-50 mb-8">
+                    <TouchableOpacity
+                        onPress={handleSwitchTeam}
+                        className="flex-row items-center justify-center p-2"
+                    >
+                        <LogOut size={20} color="#EF4444" />
+                        <Text className="ml-2 font-black italic text-red-500 uppercase tracking-widest text-xs">TROCAR DE TIME</Text>
+                    </TouchableOpacity>
+                </Card>
+            </View>
+        </ScrollView>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f5f5f5',
-    },
-    content: {
-        padding: 16,
-        paddingBottom: 40,
-    },
-    card: {
-        marginBottom: 16,
-    },
-    radioRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 8,
-    },
-    radioLabel: {
-        fontSize: 16,
-    },
-    inputContainer: {
-        gap: 12,
-    },
-    saveBtn: {
-        marginTop: 8,
-        paddingVertical: 6,
-    },
-    note: {
-        marginTop: 16,
-        textAlign: 'center',
-        color: '#888',
-        fontSize: 12,
-    },
-});

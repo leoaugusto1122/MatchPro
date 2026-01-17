@@ -1,16 +1,26 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
-import { Text, TextInput, Button, SegmentedButtons, Avatar, ActivityIndicator, Divider, Chip, Surface } from 'react-native-paper';
+import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
-import { doc, getDoc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { Match, MatchEvent, PresenceStatus, GamePayment } from '@/types/models';
 import { BillingService } from '@/services/billingService';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { StatsService } from '@/services/statsService';
+import {
+    Calendar, MapPin, Trophy, Target,
+    CheckCircle2, XCircle, HelpCircle,
+    Save, Flag, RotateCcw, DollarSign,
+    ChevronLeft, Settings2, Plus, Minus
+} from 'lucide-react-native';
+
+import { Header } from '@/components/ui/Header';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
 export default function MatchDetailsScreen({ route, navigation }: any) {
     const teamId = useTeamStore(state => state.teamId);
@@ -26,36 +36,32 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     const [loading, setLoading] = useState(false);
     const [match, setMatch] = useState<Match | null>(null);
     const [events, setEvents] = useState<MatchEvent[]>([]);
-    const [payments, setPayments] = useState<Record<string, GamePayment>>({}); // playerId -> payment
+    const [payments, setPayments] = useState<Record<string, GamePayment>>({});
 
-    // Form State
     const [opponent, setOpponent] = useState('');
     const [location, setLocation] = useState('');
     const [date, setDate] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
 
-    // Score State
     const [scoreHome, setScoreHome] = useState('0');
     const [scoreAway, setScoreAway] = useState('0');
 
     useEffect(() => {
         if (!teamId || !matchId) return;
 
-        // Fetch Match
         const matchRef = doc(db, 'teams', teamId, 'matches', matchId);
         const unsubMatch = onSnapshot(matchRef, (snap) => {
             if (snap.exists()) {
-                const data = snap.data() as Match;
-                setMatch({ id: snap.id, ...data });
+                const data = snap.data();
+                setMatch({ ...data, id: snap.id } as Match);
                 setOpponent(data.opponent || '');
                 setLocation(data.location || '');
-                setDate(data.date?.toDate ? data.date.toDate() : new Date(data.date));
+                setDate(data.date?.toDate ? data.date.toDate() : (data.date ? new Date(data.date) : new Date()));
                 setScoreHome(data.scoreHome?.toString() || '0');
                 setScoreAway(data.scoreAway?.toString() || '0');
             }
         });
 
-        // Fetch Events
         const eventsRef = collection(db, 'teams', teamId, 'matches', matchId, 'events');
         const q = query(eventsRef, orderBy('createdAt', 'asc'));
         const unsubEvents = onSnapshot(q, (snap) => {
@@ -66,13 +72,12 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             setEvents(list);
         });
 
-        // Fetch Payments
         const paymentsRef = collection(db, 'teams', teamId, 'matches', matchId, 'payments');
         const unsubPayments = onSnapshot(paymentsRef, (snap) => {
             const map: Record<string, GamePayment> = {};
             snap.forEach(doc => {
                 const p = doc.data() as GamePayment;
-                map[p.playerId] = p; // Indexed by playerId for easy access
+                map[p.playerId] = p;
             });
             setPayments(map);
         });
@@ -120,7 +125,6 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             return;
         }
 
-        // Lock business rule
         if (match.status === 'finished' && !isOwner) {
             Alert.alert('Bloqueado', 'Partida finalizada. Presença travada.');
             return;
@@ -141,12 +145,10 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         }
     };
 
-    // --- Match Center Logic ---
-
     const canEditStats = useMemo(() => {
         if (!match) return false;
-        if (match.status === 'finished') return isOwner; // Only Owner edits after finish
-        return canManageMatches; // Coach/Owner can edit before finish
+        if (match.status === 'finished') return isOwner;
+        return canManageMatches;
     }, [match, isOwner, canManageMatches]);
 
     const statsByPlayer = useMemo(() => {
@@ -177,14 +179,9 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
 
     const handleAddEvent = async (playerId: string, playerName: string, type: 'goal' | 'assist') => {
         if (!match || !teamId) return;
-
-        // Business Rule: Max 1 assist per goal (Total Assists <= Total Goals)
-        // Wait, current event isn't added yet.
-        if (type === 'assist') {
-            if (totalPlayerAssists >= totalPlayerGoals) {
-                Alert.alert('Inválido', 'Número de assistências não pode superar o número de gols.');
-                return;
-            }
+        if (type === 'assist' && totalPlayerAssists >= totalPlayerGoals) {
+            Alert.alert('Inválido', 'Número de assistências não pode superar o número de gols.');
+            return;
         }
 
         try {
@@ -202,14 +199,9 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     };
 
     const handleRemoveLastEvent = async (playerId: string, type: 'goal' | 'assist') => {
-        // Find last event for this player of this type
         const playerEvents = events.filter(e => e.playerId === playerId && e.type === type);
         if (playerEvents.length === 0) return;
-
-        const lastEvent = playerEvents[playerEvents.length - 1]; // Assuming sorted by date query? Yes we did orderBy.
-        // Actually better to sort locally to be sure logic matches UI
-        // But firestore id is random, so date essential.
-
+        const lastEvent = playerEvents[playerEvents.length - 1];
         try {
             await deleteDoc(doc(db, 'teams', teamId!, 'matches', matchId, 'events', lastEvent.id));
         } catch (e) {
@@ -232,7 +224,6 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
 
     const handleFinalizeMatch = async () => {
         if (!match || !teamId) return;
-
         Alert.alert(
             'Finalizar Partida',
             'Ao finalizar, os dados serão travados e a presença encerrada. Deseja continuar?',
@@ -256,7 +247,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                             navigation.goBack();
                         } catch (e) {
                             console.error(e);
-                            Alert.alert('Erro', 'Falha ao finalizar partida e processar estatísticas.');
+                            Alert.alert('Erro', 'Falha ao finalizar partida.');
                         } finally {
                             setLoading(false);
                         }
@@ -266,10 +257,8 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         );
     };
 
-    // Owner Logic: Re-open Match
     const handleReopenMatch = async () => {
         if (!match || !teamId) return;
-
         Alert.alert(
             'Reabrir Partida',
             'ATENÇÃO: Ao reabrir, as estatísticas desta partida serão SUBTRAÍDAS dos jogadores. Tem certeza?',
@@ -281,11 +270,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                     onPress: async () => {
                         try {
                             setLoading(true);
-                            await StatsService.rollbackMatchStats(
-                                teamId,
-                                matchId,
-                                events
-                            );
+                            await StatsService.rollbackMatchStats(teamId, matchId, events);
                             Alert.alert('Sucesso', 'Partida reaberta e estatísticas revertidas.');
                         } catch (e) {
                             console.error(e);
@@ -301,15 +286,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
 
     const handlePaymentAction = async (playerId: string) => {
         const payment = payments[playerId];
-        if (!payment || payment.status === 'paid') return;
-
-        if (currentRole === 'player' || currentRole === 'staff') {
-            // staff shouldn't be here, but just in case
-            if (currentRole === 'player') return; // Player cannot mark as paid
-        }
-        // Owner or Coach can mark as paid
-        // Check exact role permission from prompt: Owner & Coach ✅
-        if (!isOwner && currentRole !== 'coach') return;
+        if (!payment || payment.status === 'paid' || (!isOwner && currentRole !== 'coach')) return;
 
         Alert.alert(
             'Confirmar Pagamento',
@@ -331,9 +308,6 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         );
     };
 
-
-    // --- Render ---
-
     const getMyStatus = () => {
         if (match?.presence && myPlayerProfile?.id) {
             return match.presence[myPlayerProfile.id]?.status || 'out';
@@ -341,292 +315,281 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         return 'out';
     };
 
-    if (loading) return <ActivityIndicator style={{ flex: 1 }} />;
+    if (loading) {
+        return (
+            <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
+                <ActivityIndicator size="large" color="#006400" />
+            </View>
+        );
+    }
 
     return (
-        <ScrollView contentContainerStyle={styles.container}>
-            {/* Header / Meta */}
-            {isEditing ? (
-                <View style={styles.card}>
-                    <Text variant="titleMedium" style={styles.sectionTitle}>Editar Detalhes</Text>
-                    <TextInput label="Adversário" value={opponent} onChangeText={setOpponent} mode="outlined" style={styles.input} />
-                    <TextInput label="Local" value={location} onChangeText={setLocation} mode="outlined" style={styles.input} />
-                    <Text variant="bodyMedium" style={{ marginBottom: 10 }}>Data: {format(date, "dd/MM/yyyy HH:mm")}</Text>
-                    <Button onPress={() => setShowDatePicker(true)} mode="outlined">Alterar Data</Button>
-                    <View style={styles.row}>
-                        <Button onPress={() => setIsEditing(false)} style={{ flex: 1 }}>Cancelar</Button>
-                        <Button mode="contained" onPress={handleSaveInfo} style={{ flex: 1 }}>Salvar</Button>
-                    </View>
-                </View>
-            ) : (
-                <View style={styles.header}>
-                    <View style={styles.scoreBoard}>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold' }}>Meu Time</Text>
-                        {canEditStats ? (
-                            <View style={styles.scoreInputs}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 bg-[#F8FAFC]">
+            <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+
+                {/* Header Section */}
+                <View className="pt-12 px-6 pb-6 bg-white border-b border-slate-100 mb-6 shadow-sm">
+                    <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center mb-6">
+                        <ChevronLeft size={20} color="#94A3B8" />
+                        <Text className="ml-1 font-black italic text-slate-400 uppercase tracking-widest text-[10px]">Agenda</Text>
+                    </TouchableOpacity>
+
+                    {isEditing ? (
+                        <View className="gap-4">
+                            <Header title="EDITAR JOGO" subtitle="Detalhes da Partida" />
+                            <View>
+                                <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">ADVERSÁRIO</Text>
                                 <TextInput
-                                    style={styles.scoreInput}
-                                    value={scoreHome}
-                                    onChangeText={setScoreHome}
-                                    keyboardType="numeric"
-                                    dense
-                                />
-                                <Text variant="headlineSmall">x</Text>
-                                <TextInput
-                                    style={styles.scoreInput}
-                                    value={scoreAway}
-                                    onChangeText={setScoreAway}
-                                    keyboardType="numeric"
-                                    dense
+                                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 font-bold"
+                                    value={opponent} onChangeText={setOpponent} placeholder="Nome do Adversário"
                                 />
                             </View>
-                        ) : (
-                            <Text variant="displayMedium" style={{ marginHorizontal: 10 }}>
-                                {match?.scoreHome} x {match?.scoreAway}
-                            </Text>
-                        )}
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold' }}>{match?.opponent || 'Adv'}</Text>
-                    </View>
+                            <View>
+                                <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">LOCAL</Text>
+                                <TextInput
+                                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 font-bold"
+                                    value={location} onChangeText={setLocation} placeholder="Estádio / Arena"
+                                />
+                            </View>
+                            <View className="flex-row items-center justify-between py-2 border-y border-dashed border-slate-100">
+                                <View className="flex-row items-center">
+                                    <Calendar size={18} color="#94A3B8" />
+                                    <Text className="ml-2 font-bold text-slate-600">{format(date, "dd/MM/yyyy HH:mm")}</Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setShowDatePicker(true)} className="bg-slate-900 px-4 py-2 rounded-lg">
+                                    <Text className="text-white font-black italic uppercase text-[10px] tracking-widest">ALTERAR</Text>
+                                </TouchableOpacity>
+                            </View>
 
-                    <Text variant="bodyMedium" style={{ color: '#666', marginTop: 5 }}>
-                        {match?.date && format(match.date, "EEEE, d 'de' MMMM", { locale: ptBR })} • {match?.location}
-                    </Text>
-                    <Chip style={{ marginTop: 5 }} mode="outlined" icon={match?.status === 'finished' ? 'check' : 'clock'}>
-                        {match?.status === 'finished' ? 'Finalizada' : 'Agendada'}
-                    </Chip>
+                            <View className="flex-row gap-4 mt-2">
+                                <TouchableOpacity onPress={() => setIsEditing(false)} className="flex-1 py-4 items-center">
+                                    <Text className="text-slate-400 font-black italic uppercase text-xs tracking-widest">CANCELAR</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={handleSaveInfo} className="flex-2 bg-[#006400] px-6 py-4 rounded-2xl items-center shadow-lg shadow-green-900/20">
+                                    <Text className="text-white font-black italic uppercase text-xs tracking-widest">SALVAR JOGO</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    ) : (
+                        <View>
+                            <View className="flex-row justify-between items-center mb-6">
+                                <Badge
+                                    label={match?.status === 'finished' ? 'FINALIZADA' : 'AGENDADA'}
+                                    color={match?.status === 'finished' ? 'bg-slate-900' : 'bg-emerald-100'}
+                                    textColor={match?.status === 'finished' ? 'text-white' : 'text-emerald-700'}
+                                />
+                                {canManageMatches && (match?.status !== 'finished' || isOwner) && (
+                                    <TouchableOpacity onPress={() => setIsEditing(true)}>
+                                        <Settings2 size={20} color="#94A3B8" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
 
-                    {canManageMatches && (match?.status !== 'finished' || isOwner) && (
-                        <Button mode="text" onPress={() => setIsEditing(true)}>Editar Detalhes</Button>
-                    )}
-                </View>
-            )}
-
-            <Divider style={{ marginVertical: 20 }} />
-
-            {/* Match Center (Stats) */}
-            <Text variant="titleLarge" style={styles.sectionTitle}>Match Center</Text>
-
-            {canEditStats && match?.status !== 'finished' && (
-                <View style={styles.adminPanel}>
-                    <Button mode="contained-tonal" icon="content-save" onPress={handleUpdateScore}>Atualizar Placar</Button>
-                    <Button mode="contained" buttonColor={match?.status === 'finished' ? 'gray' : 'red'} icon="flag-checkered" onPress={handleFinalizeMatch}>
-                        Finalizar Partida
-                    </Button>
-                </View>
-            )}
-
-            {isOwner && match?.status === 'finished' && (
-                <View style={styles.adminPanel}>
-                    <Button mode="outlined" icon="lock-open" onPress={handleReopenMatch}>Reabrir Partida (Rollback)</Button>
-                </View>
-            )}
-
-            {(match?.status === 'finished' || canEditStats) ? (
-                <View style={styles.statsContainer}>
-                    {confirmedPlayers.map((p) => {
-                        const pStats = statsByPlayer[p.id] || { goals: 0, assists: 0 };
-                        return (
-                            <Surface key={p.id} style={styles.playerRow} elevation={1}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                                    <Avatar.Text size={40} label={p.name.substring(0, 2).toUpperCase()} />
-                                    <View style={{ marginLeft: 10 }}>
-                                        <Text variant="titleSmall">
-                                            {p.name}
-                                            {payments[p.id] && (
-                                                <TouchableOpacity onPress={() => handlePaymentAction(p.id)}>
-                                                    <Chip
-                                                        style={{ marginLeft: 8, height: 24 }}
-                                                        textStyle={{ fontSize: 10, lineHeight: 12 }}
-                                                        mode="flat"
-                                                        icon={payments[p.id].status === 'paid' ? 'check' : 'cash-clock'}
-                                                        compact
-                                                    >
-                                                        {payments[p.id].status === 'paid' ? 'Pago' : 'Pendente'}
-                                                    </Chip>
-                                                </TouchableOpacity>
-                                            )}
-                                        </Text>
-                                        <Text variant="bodySmall" style={{ color: '#666' }}>
-                                            {pStats.goals} Gols • {pStats.assists} Ass
-                                        </Text>
+                            {/* Scoreboard */}
+                            <View className="flex-row justify-between items-center px-4 mb-4">
+                                <View className="items-center flex-1">
+                                    <View className="w-16 h-16 bg-slate-900 rounded-3xl items-center justify-center mb-2">
+                                        <Trophy size={32} color="white" />
                                     </View>
+                                    <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest">MEU TIME</Text>
                                 </View>
 
-                                {canEditStats && (
-                                    <View style={styles.statControls}>
-                                        <View style={styles.statControlGroup}>
-                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'goal')}>
-                                                <Text style={styles.minus}>-</Text>
-                                            </TouchableOpacity>
-                                            <Text style={styles.statLabel}>G</Text>
-                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'goal')}>
-                                                <Text style={styles.plus}>+</Text>
-                                            </TouchableOpacity>
+                                <View className="flex-row items-center gap-4">
+                                    {canEditStats ? (
+                                        <View className="flex-row items-center gap-2">
+                                            <TextInput
+                                                className="bg-slate-100 w-14 h-14 rounded-2xl text-center text-3xl font-black italic text-slate-900"
+                                                value={scoreHome} onChangeText={setScoreHome} keyboardType="numeric"
+                                            />
+                                            <Text className="text-slate-300 font-black italic text-xl">X</Text>
+                                            <TextInput
+                                                className="bg-slate-100 w-14 h-14 rounded-2xl text-center text-3xl font-black italic text-slate-900"
+                                                value={scoreAway} onChangeText={setScoreAway} keyboardType="numeric"
+                                            />
                                         </View>
+                                    ) : (
+                                        <View className="flex-row items-center gap-4">
+                                            <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreHome}</Text>
+                                            <Text className="text-slate-300 font-black italic text-2xl">X</Text>
+                                            <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreAway}</Text>
+                                        </View>
+                                    )}
+                                </View>
 
-                                        <View style={styles.statControlGroup}>
-                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'assist')}>
-                                                <Text style={styles.minus}>-</Text>
-                                            </TouchableOpacity>
-                                            <Text style={styles.statLabel}>A</Text>
-                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'assist')}>
-                                                <Text style={styles.plus}>+</Text>
-                                            </TouchableOpacity>
-                                        </View>
+                                <View className="items-center flex-1">
+                                    <View className="w-16 h-16 bg-slate-100 rounded-3xl items-center justify-center mb-2">
+                                        <Trophy size={32} color="#CBD5E1" />
                                     </View>
-                                )}
-                            </Surface>
-                        );
-                    })}
-                    {confirmedPlayers.length === 0 && <Text style={{ textAlign: 'center', color: '#888' }}>Nenhum jogador confirmado.</Text>}
+                                    <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest" numberOfLines={1}>{match?.opponent || 'ADV'}</Text>
+                                </View>
+                            </View>
+
+                            <View className="items-center mt-6">
+                                <View className="flex-row items-center mb-1">
+                                    <Calendar size={12} color="#64748B" />
+                                    <Text className="ml-1 text-xs font-black italic uppercase text-slate-500 tracking-widest">
+                                        {match?.date && (() => {
+                                            try {
+                                                const d = (match.date as any).toDate ? (match.date as any).toDate() : new Date(match.date);
+                                                return format(d, "EEEE, d 'DE' MMMM", { locale: ptBR });
+                                            } catch (e) { return ''; }
+                                        })()}
+                                    </Text>
+                                </View>
+                                <View className="flex-row items-center">
+                                    <MapPin size={12} color="#94A3B8" />
+                                    <Text className="ml-1 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">{match?.location}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
                 </View>
-            ) : (
-                <Text style={{ textAlign: 'center', margin: 20, color: '#666' }}>
-                    Estatísticas disponíveis após o jogo.
-                </Text>
-            )}
 
-            <Divider style={{ marginVertical: 20 }} />
+                {/* Match Center / Presence */}
+                <View className="px-6">
 
-            {/* Presence Section (ReadOnly if Finished) */}
-            <Text variant="titleMedium" style={styles.sectionTitle}>Presença</Text>
-            {match?.status !== 'finished' || isOwner ? (
-                <>
-                    <SegmentedButtons
-                        value={getMyStatus()}
-                        onValueChange={(val) => handlePresence(val as PresenceStatus)}
-                        buttons={[
-                            { value: 'confirmed', label: 'Vou', icon: 'check', showSelectedCheck: true },
-                            { value: 'maybe', label: 'Talvez', icon: 'help', showSelectedCheck: true },
-                            { value: 'out', label: 'Não', icon: 'close', showSelectedCheck: true },
-                        ]}
-                    />
-                </>
-            ) : (
-                <Text style={{ color: '#666', fontStyle: 'italic' }}>Lista de presença fechada.</Text>
-            )}
+                    {/* Attendance Selector */}
+                    {match?.status !== 'finished' || isOwner ? (
+                        <View className="mb-8">
+                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">SUA PRESENÇA</Text>
+                            <View className="flex-row bg-white p-1 rounded-2xl border border-slate-100 shadow-sm">
+                                <TouchableOpacity
+                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'confirmed' ? 'bg-[#006400]' : 'bg-transparent'}`}
+                                    onPress={() => handlePresence('confirmed')}
+                                >
+                                    <CheckCircle2 size={16} color={getMyStatus() === 'confirmed' ? 'white' : '#94A3B8'} />
+                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'confirmed' ? 'text-white' : 'text-slate-400'}`}>Vou</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'maybe' ? 'bg-orange-400' : 'bg-transparent'}`}
+                                    onPress={() => handlePresence('maybe')}
+                                >
+                                    <HelpCircle size={16} color={getMyStatus() === 'maybe' ? 'white' : '#94A3B8'} />
+                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'maybe' ? 'text-white' : 'text-slate-400'}`}>Talvez</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'out' ? 'bg-red-500' : 'bg-transparent'}`}
+                                    onPress={() => handlePresence('out')}
+                                >
+                                    <XCircle size={16} color={getMyStatus() === 'out' ? 'white' : '#94A3B8'} />
+                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'out' ? 'text-white' : 'text-slate-400'}`}>Não</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    ) : null}
 
-            <View style={{ marginTop: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                {confirmedPlayers.map((p, index) => (
-                    <View key={index} style={{ alignItems: 'center', width: 60 }}>
-                        <Avatar.Text size={40} label={p.name.substring(0, 2).toUpperCase()} style={{ backgroundColor: '#e0e0e0' }} />
-                        <Text variant="bodySmall" numberOfLines={1} style={{ marginTop: 4 }}>{p.name.split(' ')[0]}</Text>
+                    {/* Admin Actions */}
+                    {canEditStats && match?.status !== 'finished' && (
+                        <View className="flex-row gap-3 mb-8">
+                            <TouchableOpacity className="flex-1 bg-slate-900 flex-row justify-center items-center py-4 rounded-2xl shadow-lg shadow-slate-300" onPress={handleUpdateScore}>
+                                <Save size={18} color="white" />
+                                <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">PLACAR</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity className="flex-1 bg-red-600 flex-row justify-center items-center py-4 rounded-2xl shadow-lg shadow-red-200" onPress={handleFinalizeMatch}>
+                                <Flag size={18} color="white" />
+                                <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">FINALIZAR</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
+                    {isOwner && match?.status === 'finished' && (
+                        <TouchableOpacity className="mb-8 border-2 border-dashed border-red-200 p-4 rounded-2xl flex-row items-center justify-center" onPress={handleReopenMatch}>
+                            <RotateCcw size={18} color="#EF4444" />
+                            <Text className="ml-2 text-red-500 font-black italic uppercase text-[10px] tracking-widest">REABRIR PARTIDA (DADOS SERÃO RESETADOS)</Text>
+                        </TouchableOpacity>
+                    )}
+
+                    {/* Stats Center */}
+                    <View className="mb-8">
+                        <View className="flex-row justify-between items-end mb-4">
+                            <Text className="text-xl font-black italic text-slate-900 tracking-tighter">MATCH CENTER</Text>
+                            <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{confirmedPlayers.length} PRESENTES</Text>
+                        </View>
+
+                        {confirmedPlayers.length > 0 ? (
+                            <View className="gap-3">
+                                {confirmedPlayers.map((p) => {
+                                    const pStats = statsByPlayer[p.id] || { goals: 0, assists: 0 };
+                                    const payment = payments[p.id];
+                                    return (
+                                        <Card key={p.id} className="p-4 border-slate-50 shadow-sm">
+                                            <View className="flex-row items-center justify-between">
+                                                <View className="flex-row items-center flex-1">
+                                                    <View className="w-10 h-10 bg-slate-900 rounded-xl items-center justify-center mr-3">
+                                                        <Text className="text-white font-black italic">{p.name.substring(0, 2).toUpperCase()}</Text>
+                                                    </View>
+                                                    <View>
+                                                        <Text className="font-bold text-slate-800">{p.name}</Text>
+                                                        <View className="flex-row items-center mt-1">
+                                                            <Target size={10} color="#006400" />
+                                                            <Text className="ml-1 text-[10px] font-black italic text-[#006400] tracking-widest uppercase">{pStats.goals} GOLS</Text>
+                                                            <View className="w-1 h-1 rounded-full bg-slate-200 mx-2" />
+                                                            <Trophy size={10} color="#00BFFF" />
+                                                            <Text className="ml-1 text-[10px] font-black italic text-[#00BFFF] tracking-widest uppercase">{pStats.assists} ASSIST</Text>
+                                                        </View>
+                                                    </View>
+                                                </View>
+
+                                                {payment && (
+                                                    <TouchableOpacity onPress={() => handlePaymentAction(p.id)} className={`px-2 py-1 rounded-lg flex-row items-center ${payment.status === 'paid' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                                                        <DollarSign size={10} color={payment.status === 'paid' ? '#10B981' : '#EF4444'} />
+                                                        <Text className={`ml-1 text-[8px] font-black uppercase tracking-widest ${payment.status === 'paid' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                            {payment.status === 'paid' ? 'PAGO' : 'PENDENTE'}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                )}
+
+                                                {canEditStats && (
+                                                    <View className="flex-row gap-2 ml-4">
+                                                        {/* Goals Control */}
+                                                        <View className="flex-row items-center bg-slate-50 rounded-xl p-1 border border-slate-100">
+                                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'goal')} className="p-1">
+                                                                <Minus size={14} color="#EF4444" />
+                                                            </TouchableOpacity>
+                                                            <Text className="font-black italic text-[10px] px-1">G</Text>
+                                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'goal')} className="p-1">
+                                                                <Plus size={14} color="#10B981" />
+                                                            </TouchableOpacity>
+                                                        </View>
+                                                        {/* Assists Control */}
+                                                        <View className="flex-row items-center bg-slate-50 rounded-xl p-1 border border-slate-100">
+                                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'assist')} className="p-1">
+                                                                <Minus size={14} color="#EF4444" />
+                                                            </TouchableOpacity>
+                                                            <Text className="font-black italic text-[10px] px-1">A</Text>
+                                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'assist')} className="p-1">
+                                                                <Plus size={14} color="#10B981" />
+                                                            </TouchableOpacity>
+                                                        </View>
+                                                    </View>
+                                                )}
+                                            </View>
+                                        </Card>
+                                    );
+                                })}
+                            </View>
+                        ) : (
+                            <View className="py-8 items-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                                <Users size={32} color="#CBD5E1" />
+                                <Text className="mt-2 text-slate-400 font-medium italic">Nenhum atleta presente ainda.</Text>
+                            </View>
+                        )}
                     </View>
-                ))}
-            </View>
 
-            {showDatePicker && (
-                <DateTimePicker
-                    value={date}
-                    mode="date"
-                    display="default"
-                    onChange={(_, selectedDate) => {
-                        setShowDatePicker(false);
-                        if (selectedDate) setDate(selectedDate);
-                    }}
-                />
-            )}
+                </View>
 
-            <View style={{ height: 50 }} />
-        </ScrollView>
+                {showDatePicker && (
+                    <DateTimePicker
+                        value={date}
+                        mode="date"
+                        display="default"
+                        onChange={(_, selectedDate) => {
+                            setShowDatePicker(false);
+                            if (selectedDate) setDate(selectedDate);
+                        }}
+                    />
+                )}
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        padding: 16,
-        backgroundColor: '#f5f5f5',
-        flexGrow: 1,
-    },
-    header: {
-        alignItems: 'center',
-        marginBottom: 10,
-        backgroundColor: 'white',
-        padding: 20,
-        borderRadius: 12,
-        elevation: 2
-    },
-    card: {
-        backgroundColor: 'white',
-        padding: 16,
-        borderRadius: 12,
-        elevation: 2,
-        marginBottom: 10
-    },
-    sectionTitle: {
-        marginBottom: 12,
-        fontWeight: 'bold',
-        color: '#333'
-    },
-    input: {
-        marginBottom: 12,
-        backgroundColor: 'white'
-    },
-    row: {
-        flexDirection: 'row',
-        gap: 10,
-        marginTop: 10
-    },
-    scoreBoard: {
-        alignItems: 'center',
-        marginBottom: 10
-    },
-    scoreInputs: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        marginVertical: 5
-    },
-    scoreInput: {
-        width: 60,
-        textAlign: 'center',
-        fontSize: 24,
-        fontWeight: 'bold',
-        backgroundColor: '#f0f0f0'
-    },
-    adminPanel: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 15,
-        gap: 10
-    },
-    statsContainer: {
-        gap: 8
-    },
-    playerRow: {
-        padding: 10,
-        borderRadius: 8,
-        backgroundColor: 'white',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between'
-    },
-    statControls: {
-        flexDirection: 'row',
-        gap: 15
-    },
-    statControlGroup: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#f0f0f0',
-        borderRadius: 20,
-        paddingHorizontal: 8,
-        paddingVertical: 2
-    },
-    plus: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#2196F3',
-        paddingHorizontal: 8
-    },
-    minus: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#F44336',
-        paddingHorizontal: 8
-    },
-    statLabel: {
-        fontWeight: 'bold',
-        marginHorizontal: 2
-    }
-});

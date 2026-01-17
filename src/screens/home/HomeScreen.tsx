@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl } from 'react-native';
-import { Text, Card, Avatar, Button, ActivityIndicator, Badge, Surface, useTheme, Divider, Banner, Chip, Appbar } from 'react-native-paper';
+import { View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
@@ -8,10 +7,15 @@ import { collection, query, where, orderBy, limit, getDocs, Timestamp, collectio
 import { Match, Player } from '@/types/models';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Calendar, MapPin, TrendingUp, Trophy, Target, AlertCircle, ChevronRight, Settings, LogOut } from 'lucide-react-native';
+
+import { Header } from '@/components/ui/Header';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 
 export default function HomeScreen({ navigation }: any) {
-    const theme = useTheme();
-    const teamId = useTeamStore(state => state.teamId);
+    const { teamId, teamName, clearTeamContext } = useTeamStore();
     const { canManageTeam } = usePermissions();
 
     const [loading, setLoading] = useState(true);
@@ -115,8 +119,8 @@ export default function HomeScreen({ navigation }: any) {
                         if (data.status === 'paid') collected += (data.amount || 0);
                         else pending += (data.amount || 0);
                     });
-                } catch (e) {
-                    console.log("Collection Group Query failed (likely missing index). skipping game payments summary.");
+                } catch (e: any) {
+                    console.log("Collection Group Query failed: " + (e.message || ""));
                 }
 
                 setFinancials({ pending, collected });
@@ -139,220 +143,221 @@ export default function HomeScreen({ navigation }: any) {
         fetchData();
     };
 
-    const renderPlayerRankItem = (player: Player, index: number, value: string | number, label: string) => (
-        <View key={player.id} style={styles.rankItem}>
-            <View style={styles.rankIndex}>
-                <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{index + 1}º</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <Avatar.Text size={36} label={player.name.substring(0, 2).toUpperCase()} style={{ marginRight: 10, backgroundColor: '#e0e0e0' }} />
-                <View>
-                    <Text variant="bodyMedium" style={{ fontWeight: '600' }}>{player.name}</Text>
-                    {player.position && <Text variant="labelSmall" style={{ color: '#666' }}>{player.position}</Text>}
-                </View>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{value}</Text>
-                <Text variant="labelSmall">{label}</Text>
-            </View>
-        </View>
-    );
+    const safeFormatDate = (date: any, fmt: string) => {
+        try {
+            if (!date) return '';
+            const d = date.toDate ? date.toDate() : new Date(date);
+            if (isNaN(d.getTime())) return '';
+            return format(d, fmt, { locale: ptBR });
+        } catch (e) {
+            return '';
+        }
+    };
 
     if (loading) {
-        return <View style={styles.center}><ActivityIndicator size="large" /></View>;
+        return <View className="flex-1 justify-center items-center bg-[#F8FAFC]"><ActivityIndicator size="large" color="#006400" /></View>;
     }
 
     return (
-        <ScrollView
-            style={styles.container}
-            contentContainerStyle={{ paddingBottom: 40 }}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        >
-            <Appbar.Header style={{ backgroundColor: theme.colors.surface }}>
-                <Appbar.Content title="Dashboard" />
-                {canManageTeam && <Appbar.Action icon="cog" onPress={() => navigation.navigate('TeamSettings')} />}
-            </Appbar.Header>
+        <View className="flex-1 bg-[#F8FAFC]">
+            <ScrollView
+                className="flex-1"
+                contentContainerStyle={{ paddingBottom: 100, paddingTop: 60, paddingHorizontal: 20 }}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#006400" />}
+            >
+                <Header
+                    title={teamName?.toUpperCase() || "MEU TIME"}
+                    subtitle="Dashboard"
+                    rightComponent={
+                        <View className="flex-row items-center space-x-2">
+                            <TouchableOpacity
+                                onPress={clearTeamContext}
+                                className="w-10 h-10 rounded-2xl bg-red-50 border border-red-100 justify-center items-center shadow-sm mr-2"
+                            >
+                                <LogOut size={20} color="#EF4444" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={() => navigation.navigate('TeamSettings')}
+                                className="w-10 h-10 rounded-2xl bg-white border border-slate-100 justify-center items-center shadow-sm"
+                            >
+                                <Settings size={20} color="#0F172A" />
+                            </TouchableOpacity>
+                        </View>
+                    }
+                />
 
-            {/* Financial Summary */}
-            {canManageTeam && (
-                <View style={[styles.section, { paddingBottom: 10 }]}>
-                    <Text variant="titleMedium" style={styles.sectionTitle}>Financeiro</Text>
-                    <View style={{ flexDirection: 'row', gap: 10 }}>
-                        <Card style={[styles.card, { flex: 1, backgroundColor: '#e3f2fd' }]}>
-                            <Card.Content>
-                                <Text variant="labelMedium">Arrecadado</Text>
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#1565C0' }}>
-                                    R$ {financials.collected.toFixed(2)}
-                                </Text>
-                            </Card.Content>
-                        </Card>
-                        <Card style={[styles.card, { flex: 1, backgroundColor: '#ffebee' }]}>
-                            <Card.Content>
-                                <Text variant="labelMedium">Pendente</Text>
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#C62828' }}>
-                                    R$ {financials.pending.toFixed(2)}
-                                </Text>
-                            </Card.Content>
+                {/* Financial Summary */}
+                {canManageTeam && (
+                    <View className="mb-8">
+                        <Text className="text-xl font-black italic text-slate-900 tracking-tighter mb-4">FINANCEIRO</Text>
+                        <Card className="bg-[#0F172A] p-0 overflow-hidden border-0">
+                            {/* Background Pattern */}
+                            <View className="absolute -right-6 -bottom-6 opacity-10">
+                                <TrendingUp size={150} color="white" />
+                            </View>
+
+                            <View className="flex-row p-6">
+                                <View className="flex-1">
+                                    <View className="flex-row items-center space-x-2 mb-2">
+                                        <View className="w-2 h-2 rounded-full bg-emerald-500" />
+                                        <Text className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Arrecadado</Text>
+                                    </View>
+                                    <Text className="text-emerald-400 text-2xl font-black italic">
+                                        R$ {financials.collected.toFixed(2)}
+                                    </Text>
+                                </View>
+                                <View className="w-[1px] bg-slate-800 mx-4" />
+                                <View className="flex-1">
+                                    <View className="flex-row items-center space-x-2 mb-2">
+                                        <View className="w-2 h-2 rounded-full bg-red-500" />
+                                        <Text className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Pendente</Text>
+                                    </View>
+                                    <Text className="text-red-400 text-2xl font-black italic">
+                                        R$ {financials.pending.toFixed(2)}
+                                    </Text>
+                                </View>
+                            </View>
                         </Card>
                     </View>
-                </View>
-            )}
-
-            {canManageTeam && confirmedCount < 5 && nextMatch && (
-                <Banner visible={true} icon="alert-circle" actions={[{ label: 'Ver Detalhes', onPress: () => navigation.navigate('MatchDetails', { matchId: nextMatch.id }) }]}>
-                    Atenção: Apenas {confirmedCount} confirmados para o próximo jogo.
-                </Banner>
-            )}
-
-            <View style={styles.section}>
-                <Text variant="titleLarge" style={styles.sectionTitle}>Próxima Partida</Text>
-                {nextMatch ? (
-                    <Card style={styles.card} onPress={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })}>
-                        <Card.Content>
-                            <View style={styles.matchHeader}>
-                                <Chip icon="calendar" compact>{nextMatch.date?.toDate ? format(nextMatch.date.toDate(), 'dd/MM HH:mm') : ''}</Chip>
-                                <Chip icon="map-marker" compact>{nextMatch.location || 'Local a definir'}</Chip>
-                            </View>
-                            <Text variant="headlineSmall" style={{ marginTop: 10, fontWeight: 'bold' }}>vs {nextMatch.opponent || 'Adversário'}</Text>
-
-                            <Divider style={{ marginVertical: 10 }} />
-
-                            <View style={styles.presenceInfo}>
-                                <Text variant="bodyMedium">Confirmados: </Text>
-                                <Badge size={24} style={{ backgroundColor: confirmedCount >= 10 ? '#4CAF50' : '#FFC107' }}>{confirmedCount}</Badge>
-                            </View>
-                        </Card.Content>
-                    </Card>
-                ) : (
-                    <Card style={styles.card}>
-                        <Card.Content>
-                            <Text style={{ color: '#666', fontStyle: 'italic' }}>Nenhum jogo agendado.</Text>
-                            {canManageTeam && <Button style={{ marginTop: 10 }} mode="contained-tonal" onPress={() => navigation.navigate('Partidas')}>Agendar</Button>}
-                        </Card.Content>
-                    </Card>
                 )}
-            </View>
 
-            {lastMatch && (
-                <View style={styles.section}>
-                    <Text variant="titleLarge" style={styles.sectionTitle}>Último Resultado</Text>
-                    <Card style={[styles.card, { backgroundColor: '#333' }]} onPress={() => navigation.navigate('MatchDetails', { matchId: lastMatch.id })}>
-                        <Card.Content>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <View style={{ alignItems: 'center' }}>
-                                    <Text variant="titleMedium" style={{ color: 'white' }}>Meu Time</Text>
-                                    <Text variant="displayMedium" style={{ color: 'white', fontWeight: 'bold' }}>{lastMatch.scoreHome}</Text>
-                                </View>
-                                <Text variant="headlineSmall" style={{ color: '#aaa' }}>X</Text>
-                                <View style={{ alignItems: 'center' }}>
-                                    <Text variant="titleMedium" style={{ color: 'white' }}>{lastMatch.opponent}</Text>
-                                    <Text variant="displayMedium" style={{ color: 'white', fontWeight: 'bold' }}>{lastMatch.scoreAway}</Text>
+                {/* Alerts */}
+                {canManageTeam && confirmedCount < 5 && nextMatch && (
+                    <TouchableOpacity onPress={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })} className="mb-6 bg-orange-50 border border-orange-200 p-4 rounded-xl flex-row items-center">
+                        <AlertCircle color="#F97316" size={24} />
+                        <View className="ml-3 flex-1">
+                            <Text className="text-orange-800 font-bold text-xs uppercase tracking-wide">Atenção</Text>
+                            <Text className="text-orange-900 font-medium text-sm">Apenas {confirmedCount} confirmados para o jogo.</Text>
+                        </View>
+                        <ChevronRight color="#F97316" size={20} />
+                    </TouchableOpacity>
+                )}
+
+                {/* Next Match */}
+                <View className="mb-8">
+                    <View className="flex-row justify-between items-end mb-4">
+                        <Text className="text-xl font-black italic text-slate-900 tracking-tighter">PRÓXIMA PARTIDA</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('Partidas')}>
+                            <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Ver Agenda</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {nextMatch ? (
+                        <Card className="bg-white" onTouchEnd={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })}>
+                            <View className="flex-row justify-between mb-4">
+                                <Badge label="Agendado" color="bg-emerald-50" textColor="text-emerald-700" />
+                                <View className="flex-row items-center">
+                                    <Calendar size={12} color="#94A3B8" />
+                                    <Text className="text-slate-400 text-xs font-bold ml-1">{safeFormatDate(nextMatch.date, 'dd/MM HH:mm')}</Text>
                                 </View>
                             </View>
-                            <Text style={{ color: '#ccc', textAlign: 'center', marginTop: 10 }}>
-                                {lastMatch.date?.toDate ? format(lastMatch.date.toDate(), "d 'de' MMMM", { locale: ptBR }) : ''}
-                            </Text>
-                        </Card.Content>
-                    </Card>
+
+                            <Text className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">VS</Text>
+                            <Text className="text-3xl font-black italic text-slate-900 uppercase mb-4" numberOfLines={1}>{nextMatch.opponent || 'Adversário'}</Text>
+
+                            <View className="flex-row items-center mb-6">
+                                <MapPin size={14} color="#64748B" />
+                                <Text className="text-slate-500 font-bold text-xs uppercase ml-2">{nextMatch.location || 'Local a definir'}</Text>
+                            </View>
+
+                            <View className="h-[1px] bg-slate-100 mb-4" />
+
+                            <View className="flex-row gap-3">
+                                <TouchableOpacity
+                                    className="flex-1 bg-[#006400] rounded-xl py-3 items-center shadow-lg shadow-green-900/20"
+                                    onPress={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })}
+                                >
+                                    <Text className="text-white font-black italic uppercase text-xs tracking-widest">Vou Jogo</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    className="flex-1 bg-slate-100 rounded-xl py-3 items-center"
+                                    onPress={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })}
+                                >
+                                    <Text className="text-slate-400 font-black italic uppercase text-xs tracking-widest">Não Vou</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </Card>
+                    ) : (
+                        <Card className="bg-white items-center py-8">
+                            <Calendar size={48} color="#E2E8F0" className="mb-4" />
+                            <Text className="text-slate-400 font-medium italic mb-4">Nenhum jogo agendado</Text>
+                            {canManageTeam && (
+                                <TouchableOpacity onPress={() => navigation.navigate('Partidas')} className="bg-slate-900 px-6 py-3 rounded-xl">
+                                    <Text className="text-white font-bold text-xs uppercase tracking-widest">Agendar Novo</Text>
+                                </TouchableOpacity>
+                            )}
+                        </Card>
+                    )}
                 </View>
-            )}
 
-            <View style={styles.rowSection}>
-                <View style={styles.halfColumn}>
-                    <Text variant="titleMedium" style={styles.sectionTitle}>Artilheiros</Text>
-                    <Surface style={styles.rankCard}>
-                        {topScorers.length > 0 ? (
-                            topScorers.map((p, i) => renderPlayerRankItem(p, i, p.goals, 'Gols'))
-                        ) : (
-                            <Text style={styles.emptyText}>Sem dados</Text>
-                        )}
-                    </Surface>
+                {/* Rankings */}
+                <View className="mb-8">
+                    <Text className="text-xl font-black italic text-slate-900 tracking-tighter mb-4">RANKINGS</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 20 }}>
+
+                        {/* Top Scorers */}
+                        <LinearGradient colors={['#FACC15', '#EA580C']} className="rounded-[2rem] p-5 w-48 mr-4 h-48 justify-between" start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                            <View>
+                                <View className="bg-white/20 self-start p-2 rounded-lg mb-2">
+                                    <Trophy color="white" size={20} />
+                                </View>
+                                <Text className="text-white/80 font-black text-[10px] uppercase tracking-widest">Artilharia</Text>
+                            </View>
+                            <View>
+                                {topScorers[0] ? (
+                                    <>
+                                        <Text className="text-white text-xl font-black italic" numberOfLines={1}>{topScorers[0].name}</Text>
+                                        <Text className="text-white font-black text-4xl italic">{topScorers[0].goals} <Text className="text-sm opacity-60">Gols</Text></Text>
+                                    </>
+                                ) : <Text className="text-white/60 font-medium">Sem dados</Text>}
+                            </View>
+                        </LinearGradient>
+
+                        {/* MVPs */}
+                        <LinearGradient colors={['#38BDF8', '#3B82F6']} className="rounded-[2rem] p-5 w-48 mr-4 h-48 justify-between" start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                            <View>
+                                <View className="bg-white/20 self-start p-2 rounded-lg mb-2">
+                                    <Target color="white" size={20} />
+                                </View>
+                                <Text className="text-white/80 font-black text-[10px] uppercase tracking-widest">MVP Pontos</Text>
+                            </View>
+                            <View>
+                                {topMvps[0] ? (
+                                    <>
+                                        <Text className="text-white text-xl font-black italic" numberOfLines={1}>{topMvps[0].name}</Text>
+                                        <Text className="text-white font-black text-4xl italic">{topMvps[0].mvpScore?.toFixed(1) || 0} <Text className="text-sm opacity-60">Pts</Text></Text>
+                                    </>
+                                ) : <Text className="text-white/60 font-medium">Sem dados</Text>}
+                            </View>
+                        </LinearGradient>
+
+                    </ScrollView>
                 </View>
 
-                <View style={styles.halfColumn}>
-                    <Text variant="titleMedium" style={styles.sectionTitle}>MVPs</Text>
-                    <Surface style={styles.rankCard}>
-                        {topMvps.length > 0 ? (
-                            topMvps.map((p, i) => renderPlayerRankItem(p, i, p.mvpScore?.toFixed(1) || '0', 'Pontos'))
-                        ) : (
-                            <Text style={styles.emptyText}>Sem dados</Text>
-                        )}
-                    </Surface>
-                </View>
-            </View>
+                {/* Last Result */}
+                {lastMatch && (
+                    <View className="mb-8">
+                        <Text className="text-xl font-black italic text-slate-900 tracking-tighter mb-4">ÚLTIMO RESULTADO</Text>
+                        <Card className="bg-[#0F172A] border-0" onTouchEnd={() => navigation.navigate('MatchDetails', { matchId: lastMatch.id })}>
+                            <View className="flex-row justify-between items-center">
+                                <View className="items-center flex-1">
+                                    <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-1">Meu Time</Text>
+                                    <Text className="text-white text-4xl font-black italic">{lastMatch.scoreHome}</Text>
+                                </View>
+                                <Text className="text-slate-600 font-black italic text-2xl">X</Text>
+                                <View className="items-center flex-1">
+                                    <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-1">{lastMatch.opponent}</Text>
+                                    <Text className="text-white text-4xl font-black italic">{lastMatch.scoreAway}</Text>
+                                </View>
+                            </View>
+                            <View className="items-center mt-4">
+                                <Badge label={safeFormatDate(lastMatch.date, "dd MMM")} color="bg-slate-800" textColor="text-slate-400" />
+                            </View>
+                        </Card>
+                    </View>
+                )}
 
-            <Text style={{ textAlign: 'center', color: '#888', marginTop: 20, fontSize: 12 }}>
-                Estatísticas atualizadas ao finalizar partidas.
-            </Text>
-
-        </ScrollView>
+            </ScrollView>
+        </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f5f5f5',
-    },
-    center: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    section: {
-        padding: 16,
-        paddingBottom: 0
-    },
-    sectionTitle: {
-        fontWeight: 'bold',
-        marginBottom: 10,
-        color: '#333'
-    },
-    card: {
-        backgroundColor: 'white',
-        borderRadius: 12,
-        elevation: 2
-    },
-    matchHeader: {
-        flexDirection: 'row',
-        gap: 8
-    },
-    presenceInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10
-    },
-    rowSection: {
-        flexDirection: 'row',
-        padding: 16,
-        gap: 10
-    },
-    halfColumn: {
-        flex: 1
-    },
-    rankCard: {
-        backgroundColor: 'white',
-        borderRadius: 12,
-        padding: 10,
-        elevation: 1,
-        minHeight: 100
-    },
-    rankItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 12,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#eee',
-        paddingBottom: 4
-    },
-    rankIndex: {
-        width: 25,
-        alignItems: 'center'
-    },
-    emptyText: {
-        textAlign: 'center',
-        color: '#999',
-        fontStyle: 'italic',
-        marginTop: 20
-    }
-});
