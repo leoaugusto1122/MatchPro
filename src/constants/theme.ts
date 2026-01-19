@@ -1,4 +1,4 @@
-import { MD3LightTheme, MD3DarkTheme, configureFonts } from 'react-native-paper';
+import { MD3LightTheme, MD3DarkTheme } from 'react-native-paper';
 
 // 🎨 Paleta de Cores Base
 const baseColors = {
@@ -32,9 +32,8 @@ const darkColors = {
 };
 
 // ✍️ Tipografia (Escalável e Legível)
-const fontConfig = {
-    fontFamily: 'System', // Usa a fonte nativa (San Francisco / Roboto) para performance e familiaridade
-};
+// const fontConfig = { fontFamily: 'System' };
+
 
 // 📦 Exportação dos Temas (Adaptados para React Native Paper)
 export const lightTheme = {

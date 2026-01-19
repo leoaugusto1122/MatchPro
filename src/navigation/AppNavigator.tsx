@@ -19,6 +19,8 @@ import MatchDetailsScreen from '@/screens/matches/MatchDetailsScreen';
 import TeamSettingsScreen from '@/screens/team/TeamSettingsScreen';
 import TeamSelectionScreen from '@/screens/team/TeamSelectionScreen';
 import JoinTeamScreen from '@/screens/team/JoinTeamScreen';
+import MatchSummaryScreen from '@/screens/matches/MatchSummaryScreen';
+import MatchVotingScreen from '@/screens/matches/MatchVotingScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -136,6 +138,16 @@ export default function AppNavigator() {
                     <Stack.Screen
                         name="MatchDetails"
                         component={MatchDetailsScreen}
+                        options={{ presentation: 'card' }}
+                    />
+                    <Stack.Screen
+                        name="MatchSummary"
+                        component={MatchSummaryScreen}
+                        options={{ presentation: 'modal' }}
+                    />
+                    <Stack.Screen
+                        name="MatchVoting"
+                        component={MatchVotingScreen}
                         options={{ presentation: 'card' }}
                     />
                     <Stack.Screen

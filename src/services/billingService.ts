@@ -47,9 +47,25 @@ export const BillingService = {
                 return p.status === 'confirmed';
             });
 
+            // PHASE 1: PREPARE AND READ ALL DOCUMENTS
+            // We need to read player docs and payment docs for all confirmed players
+            const reads = [];
             for (const playerId of confirmedPlayerIds) {
                 const playerRef = doc(db, 'teams', teamId, 'players', playerId);
-                const playerDoc = await transaction.get(playerRef);
+                const paymentRef = doc(paymentsCollectionRef, playerId);
+                reads.push({ playerId, playerRef, paymentRef });
+            }
+
+            const results = [];
+            for (const item of reads) {
+                const playerDoc = await transaction.get(item.playerRef);
+                const paymentDoc = await transaction.get(item.paymentRef);
+                results.push({ ...item, playerDoc, paymentDoc });
+            }
+
+            // PHASE 2: CALCULATE AND WRITE
+            for (const item of results) {
+                const { playerId, playerDoc, paymentDoc, playerRef, paymentRef } = item;
 
                 if (!playerDoc.exists()) continue;
 
@@ -63,32 +79,45 @@ export const BillingService = {
                     }
                 }
 
-                // Check duplicate: Use playerId as doc ID for uniqueness
-                const paymentRef = doc(paymentsCollectionRef, playerId);
-                const paymentDoc = await transaction.get(paymentRef);
-
-                if (!paymentDoc.exists()) {
-                    const newPayment: GamePayment = {
-                        id: playerId,
-                        type: 'PER_GAME',
-                        teamId,
-                        matchId,
-                        playerId,
-                        amount: perGameAmount,
-                        status: 'pending',
-                        createdAt: serverTimestamp()
-                    };
-                    transaction.set(paymentRef, newPayment);
-
-                    // UPDATE Player Financial Summary
-                    const currentSummary = playerData.financialSummary || { totalPaid: 0, totalPending: 0 };
-                    transaction.update(playerRef, {
-                        financialSummary: {
-                            totalPaid: currentSummary.totalPaid,
-                            totalPending: currentSummary.totalPending + perGameAmount
-                        }
-                    });
+                // Check Player Payment Mode
+                let pMode = playerData.paymentMode;
+                if (!pMode) {
+                    pMode = billingMode === 'PER_GAME' ? 'per_game' : 'monthly';
                 }
+
+                let shouldCharge = false;
+                if (billingMode === 'PER_GAME') {
+                    if (pMode === 'per_game') shouldCharge = true;
+                } else if (billingMode === 'MONTHLY_PLUS_GAME') {
+                    if (pMode === 'per_game') shouldCharge = true;
+                }
+
+                if (!shouldCharge) continue;
+
+                // If payment already exists, skip
+                if (paymentDoc.exists()) continue;
+
+                // Create Payment
+                const newPayment: GamePayment = {
+                    id: playerId,
+                    type: 'PER_GAME',
+                    teamId,
+                    matchId,
+                    playerId,
+                    amount: perGameAmount,
+                    status: 'pending',
+                    createdAt: serverTimestamp()
+                };
+                transaction.set(paymentRef, newPayment);
+
+                // Update Player Financial Summary
+                const currentSummary = playerData.financialSummary || { totalPaid: 0, totalPending: 0 };
+                transaction.update(playerRef, {
+                    financialSummary: {
+                        totalPaid: currentSummary.totalPaid,
+                        totalPending: currentSummary.totalPending + perGameAmount
+                    }
+                });
             }
         });
     },
@@ -116,16 +145,39 @@ export const BillingService = {
                 return;
             }
 
+            // Query active players (Read outside transaction is safe for initial list, 
+            // but we MUST read individual docs inside transaction to ensure consistency/locks)
+            // Ideally, we fetch the IDs here.
             const playersRef = collection(db, 'teams', teamId, 'players');
             const activePlayersQuery = query(playersRef, where('status', '==', 'active'));
-            // Note: Querying outside transaction for the list is acceptable 
-            // as long as we transact on each item individually or in a batch within transaction.
             const querySnapshot = await getDocs(activePlayersQuery);
+            const potentialPlayers = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Player));
 
-            const players = querySnapshot.docs.map(d => ({ ...d.data(), id: d.id } as Player));
+            // PHASE 1: PREPARE AND READ ALL DOCUMENTS
+            const reads = [];
+            for (const player of potentialPlayers) {
+                const paymentId = `${player.id}_${month.replace('-', '_')}`;
+                const paymentRef = doc(db, 'teams', teamId, 'monthlyPayments', paymentId);
+                const playerRef = doc(db, 'teams', teamId, 'players', player.id);
+                reads.push({ player, paymentId, paymentRef, playerRef });
+            }
 
-            for (const player of players) {
-                const userId = player.userId;
+            const results = [];
+            for (const item of reads) {
+                const paymentDoc = await transaction.get(item.paymentRef);
+                const playerDoc = await transaction.get(item.playerRef);
+                results.push({ ...item, paymentDoc, playerDoc });
+            }
+
+            // PHASE 2: CALCULATE AND WRITE
+            for (const item of results) {
+                const { player, paymentRef, playerRef, paymentDoc, playerDoc, paymentId } = item;
+
+                if (!playerDoc.exists()) continue; // Should exist, but safety check
+
+                const playerData = playerDoc.data() as Player; // Use transactional data
+                const userId = playerData.userId;
+
                 if (userId) {
                     const memberRole = teamData.members?.[userId];
                     if (memberRole === 'coach' || memberRole === 'staff' || memberRole === 'owner') {
@@ -133,41 +185,43 @@ export const BillingService = {
                     }
                 }
 
-                // Doc ID format: playerId_YYYY_MM
-                const paymentId = `${player.id}_${month.replace('-', '_')}`;
-                const paymentRef = doc(db, 'teams', teamId, 'monthlyPayments', paymentId);
-
-                // We also need ref to player to update summary inside transaction
-                const playerRef = doc(db, 'teams', teamId, 'players', player.id);
-
-                // We re-read player doc to ensure consistency of summary
-                const paymentDoc = await transaction.get(paymentRef);
-                const playerDoc = await transaction.get(playerRef);
-
-                if (!paymentDoc.exists() && playerDoc.exists()) {
-                    const pData = playerDoc.data() as Player;
-
-                    const newPayment: MonthlyPayment = {
-                        id: paymentId,
-                        type: 'MONTHLY',
-                        teamId,
-                        playerId: player.id,
-                        month,
-                        amount: monthlyAmount,
-                        status: 'pending',
-                        createdAt: serverTimestamp()
-                    };
-                    transaction.set(paymentRef, newPayment);
-
-                    // UPDATE Player Financial Summary
-                    const currentSummary = pData.financialSummary || { totalPaid: 0, totalPending: 0 };
-                    transaction.update(playerRef, {
-                        financialSummary: {
-                            totalPaid: currentSummary.totalPaid,
-                            totalPending: currentSummary.totalPending + monthlyAmount
-                        }
-                    });
+                // Check Player Payment Mode
+                let pMode = playerData.paymentMode;
+                if (!pMode) {
+                    pMode = 'monthly';
                 }
+
+                let shouldCharge = false;
+                if (billingMode === 'MONTHLY') {
+                    if (pMode === 'monthly') shouldCharge = true;
+                } else if (billingMode === 'MONTHLY_PLUS_GAME') {
+                    if (pMode === 'monthly') shouldCharge = true;
+                }
+
+                if (!shouldCharge) continue;
+
+                if (paymentDoc.exists()) continue;
+
+                const newPayment: MonthlyPayment = {
+                    id: paymentId,
+                    type: 'MONTHLY',
+                    teamId,
+                    playerId: player.id,
+                    month,
+                    amount: monthlyAmount,
+                    status: 'pending',
+                    createdAt: serverTimestamp()
+                };
+                transaction.set(paymentRef, newPayment);
+
+                // UPDATE Player Financial Summary
+                const currentSummary = playerData.financialSummary || { totalPaid: 0, totalPending: 0 };
+                transaction.update(playerRef, {
+                    financialSummary: {
+                        totalPaid: currentSummary.totalPaid,
+                        totalPending: currentSummary.totalPending + monthlyAmount
+                    }
+                });
             }
         });
     },
@@ -191,24 +245,26 @@ export const BillingService = {
         }
 
         await runTransaction(db, async (transaction) => {
+            // 1. READ ALL FIRST
             const docSnap = await transaction.get(paymentRef);
             if (!docSnap.exists()) throw new Error("Payment document not found");
 
             const data = docSnap.data() as GamePayment | MonthlyPayment;
-            if (data.status === 'paid') return; // Already paid
-
             const playerId = data.playerId;
+
+            const playerRef = doc(db, 'teams', teamId, 'players', playerId);
+            const playerDoc = await transaction.get(playerRef);
+
+            // 2. CHECKS & CALCS
+            if (data.status === 'paid') return; // Already paid
             const amount = data.amount;
 
+            // 3. WRITES
             transaction.update(paymentRef, {
                 status: 'paid',
                 paidAt: serverTimestamp(),
                 confirmedBy: confirmedByUserId
             });
-
-            // Update Player Financial Summary
-            const playerRef = doc(db, 'teams', teamId, 'players', playerId);
-            const playerDoc = await transaction.get(playerRef);
 
             if (playerDoc.exists()) {
                 const pData = playerDoc.data() as Player;

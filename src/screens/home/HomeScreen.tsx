@@ -3,8 +3,9 @@ import { View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, 
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
-import { collection, query, where, orderBy, limit, getDocs, Timestamp, collectionGroup } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, Timestamp } from 'firebase/firestore';
 import { Match, Player } from '@/types/models';
+import { TransactionService } from '@/services/transactionService';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,7 +16,7 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 
 export default function HomeScreen({ navigation }: any) {
-    const { teamId, teamName, clearTeamContext } = useTeamStore();
+    const { teamId, teamName, clearTeamContext, currentRole } = useTeamStore();
     const { canManageTeam } = usePermissions();
 
     const [loading, setLoading] = useState(true);
@@ -27,7 +28,7 @@ export default function HomeScreen({ navigation }: any) {
 
     const [topScorers, setTopScorers] = useState<Player[]>([]);
     const [topMvps, setTopMvps] = useState<Player[]>([]);
-    const [financials, setFinancials] = useState({ pending: 0, collected: 0 });
+    const [financials, setFinancials] = useState({ pending: 0, collected: 0, balance: 0 });
 
     const fetchData = async () => {
         if (!teamId) return;
@@ -93,37 +94,26 @@ export default function HomeScreen({ navigation }: any) {
             const mvpSnap = await getDocs(mvpQ);
             setTopMvps(mvpSnap.docs.map(d => ({ ...d.data(), id: d.id } as Player)));
 
-            // 5. Financial Summary (Owner/Coach only)
+            // 5. Financial Summary (Owner/Coach only) using TransactionService
             if (canManageTeam) {
-                let pending = 0;
-                let collected = 0;
+                // Trigger monthly check (Async, don't await blocking)
+                TransactionService.checkAndGenerateMonthlyTransactions(teamId).catch(console.error);
 
-                // Monthly Payments
-                const monthlyQ = query(collection(db, 'teams', teamId, 'monthlyPayments'));
-                const monthlySnap = await getDocs(monthlyQ);
-                monthlySnap.forEach(d => {
-                    const data = d.data();
-                    if (data.status === 'paid') collected += (data.amount || 0);
-                    else pending += (data.amount || 0);
+                const summary = await TransactionService.getSummary(teamId);
+                // "Collected" = Income Paid. "Pending" = Pending (Income).
+                // Our getSummary returns { income (paid), expense (paid), pending (all pending) }
+                // Warning: getSummary might include paid expenses in 'income' if not careful? 
+                // TransactionService.getSummary impl: 
+                // if t.status === 'paid' { if type=income income+=; if type=expense expense+= }
+                // if t.status === 'pending' { pending+= }
+
+                // So collected = summary.income. 
+                // Pending = summary.pending.
+                setFinancials({
+                    collected: summary.income,
+                    pending: summary.pending,
+                    balance: summary.balance
                 });
-
-                // Game Payments 
-                try {
-                    const gameQ = query(
-                        collectionGroup(db, 'payments'),
-                        where('teamId', '==', teamId)
-                    );
-                    const gameSnap = await getDocs(gameQ);
-                    gameSnap.forEach(d => {
-                        const data = d.data();
-                        if (data.status === 'paid') collected += (data.amount || 0);
-                        else pending += (data.amount || 0);
-                    });
-                } catch (e: any) {
-                    console.log("Collection Group Query failed: " + (e.message || ""));
-                }
-
-                setFinancials({ pending, collected });
             }
 
         } catch (e) {
@@ -167,7 +157,12 @@ export default function HomeScreen({ navigation }: any) {
             >
                 <Header
                     title={teamName?.toUpperCase() || "MEU TIME"}
-                    subtitle="Dashboard"
+                    subtitle={
+                        currentRole === 'owner' ? 'Gestão do Clube' :
+                            currentRole === 'coach' ? 'Comissão Técnica' :
+                                currentRole === 'staff' ? 'Staff' :
+                                    'Atuando como Jogador'
+                    }
                     rightComponent={
                         <View className="flex-row items-center space-x-2">
                             <TouchableOpacity
@@ -189,8 +184,13 @@ export default function HomeScreen({ navigation }: any) {
                 {/* Financial Summary */}
                 {canManageTeam && (
                     <View className="mb-8">
-                        <Text className="text-xl font-black italic text-slate-900 tracking-tighter mb-4">FINANCEIRO</Text>
-                        <Card className="bg-[#0F172A] p-0 overflow-hidden border-0">
+                        <View className="flex-row justify-between items-end mb-4">
+                            <Text className="text-xl font-black italic text-slate-900 tracking-tighter">FINANCEIRO</Text>
+                            <TouchableOpacity onPress={() => navigation.navigate('Financeiro')}>
+                                <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Ver Detalhes</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <Card className="bg-[#0F172A] p-0 overflow-hidden border-0" onTouchEnd={() => navigation.navigate('Financeiro')}>
                             {/* Background Pattern */}
                             <View className="absolute -right-6 -bottom-6 opacity-10">
                                 <TrendingUp size={150} color="white" />

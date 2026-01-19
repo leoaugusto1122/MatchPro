@@ -1,26 +1,25 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
-import { doc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
-import { Match, MatchEvent, PresenceStatus, GamePayment } from '@/types/models';
-import { BillingService } from '@/services/billingService';
+import { doc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
+import { Match, MatchEvent, PresenceStatus, Transaction } from '@/types/models'; // Updated import
+import { TransactionService } from '@/services/transactionService'; // New Service
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { StatsService } from '@/services/statsService';
 import {
     Calendar, MapPin, Trophy, Target,
-    CheckCircle2, XCircle, HelpCircle,
-    Save, Flag, RotateCcw, DollarSign,
-    ChevronLeft, Settings2, Plus, Minus
+    CheckCircle2, XCircle,
+    Flag, RotateCcw, DollarSign,
+    ChevronLeft, Settings2, Users, X
 } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
 export default function MatchDetailsScreen({ route, navigation }: any) {
     const teamId = useTeamStore(state => state.teamId);
@@ -36,15 +35,20 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     const [loading, setLoading] = useState(false);
     const [match, setMatch] = useState<Match | null>(null);
     const [events, setEvents] = useState<MatchEvent[]>([]);
-    const [payments, setPayments] = useState<Record<string, GamePayment>>({});
+    const [transactions, setTransactions] = useState<Transaction[]>([]); // Changed from payments
 
     const [opponent, setOpponent] = useState('');
     const [location, setLocation] = useState('');
     const [date, setDate] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
 
     const [scoreHome, setScoreHome] = useState('0');
     const [scoreAway, setScoreAway] = useState('0');
+
+    // New States for Votes View
+    const [showVotesModal, setShowVotesModal] = useState(false);
+    const [allVotes, setAllVotes] = useState<any[]>([]);
 
     useEffect(() => {
         if (!teamId || !matchId) return;
@@ -72,22 +76,27 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             setEvents(list);
         });
 
-        const paymentsRef = collection(db, 'teams', teamId, 'matches', matchId, 'payments');
-        const unsubPayments = onSnapshot(paymentsRef, (snap) => {
-            const map: Record<string, GamePayment> = {};
-            snap.forEach(doc => {
-                const p = doc.data() as GamePayment;
-                map[p.playerId] = p;
-            });
-            setPayments(map);
+        const unsubTransactions = TransactionService.subscribeToMatchTransactions(teamId, matchId, (list) => {
+            setTransactions(list);
         });
 
         return () => {
             unsubMatch();
             unsubEvents();
-            unsubPayments();
+            unsubTransactions();
         };
     }, [matchId, teamId]);
+
+    // Derived Financial State
+    const paymentsMap = useMemo(() => {
+        const map: Record<string, Transaction> = {};
+        transactions.forEach(t => {
+            if (t.playerId && t.category === 'game') {
+                map[t.playerId] = t;
+            }
+        });
+        return map;
+    }, [transactions]);
 
     const handleSaveInfo = async () => {
         if (!opponent || !teamId) return;
@@ -125,9 +134,24 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             return;
         }
 
+        // Rule: Only Athletes or Owner can mark presence
+        if (!myPlayerProfile.isAthlete && !isOwner) {
+            Alert.alert('Aviso', 'Apenas jogadores ativos participam da lista de presença.');
+            return;
+        }
+
         if (match.status === 'finished' && !isOwner) {
             Alert.alert('Bloqueado', 'Partida finalizada. Presença travada.');
             return;
+        }
+
+        // Rule: Cannot change presence if match date has passed (and not owner)
+        if (match.date && !isOwner) {
+            const matchDate = (match.date as any).toDate ? (match.date as any).toDate() : new Date(match.date);
+            if (new Date() > matchDate) {
+                Alert.alert('Bloqueado', 'A data da partida já passou. Não é possível alterar a presença.');
+                return;
+            }
         }
 
         try {
@@ -139,6 +163,12 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                     timestamp: new Date()
                 }
             });
+
+            // TRIGGER FINANCIAL UPDATE
+            if (status === 'confirmed') {
+                await TransactionService.syncMatchTransactions(teamId, match.id);
+            }
+
         } catch (e) {
             console.error(e);
             Alert.alert('Erro', 'Falha ao confirmar presença.');
@@ -152,6 +182,14 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     }, [match, isOwner, canManageMatches]);
 
     const statsByPlayer = useMemo(() => {
+        if (match?.stats) {
+            const derived: Record<string, { goals: number, assists: number }> = {};
+            Object.entries(match.stats).forEach(([pid, stat]) => {
+                derived[pid] = { goals: stat.goals || 0, assists: stat.assists || 0 };
+            });
+            return derived;
+        }
+
         const stats: Record<string, { goals: number, assists: number }> = {};
         events.forEach(e => {
             if (!stats[e.playerId]) stats[e.playerId] = { goals: 0, assists: 0 };
@@ -159,15 +197,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             if (e.type === 'assist') stats[e.playerId].assists++;
         });
         return stats;
-    }, [events]);
-
-    const totalPlayerGoals = useMemo(() => {
-        return events.filter(e => e.type === 'goal').length;
-    }, [events]);
-
-    const totalPlayerAssists = useMemo(() => {
-        return events.filter(e => e.type === 'assist').length;
-    }, [events]);
+    }, [events, match?.stats]);
 
     const confirmedPlayers = useMemo(() => {
         if (!match?.presence) return [];
@@ -177,50 +207,13 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [match?.presence]);
 
-    const handleAddEvent = async (playerId: string, playerName: string, type: 'goal' | 'assist') => {
-        if (!match || !teamId) return;
-        if (type === 'assist' && totalPlayerAssists >= totalPlayerGoals) {
-            Alert.alert('Inválido', 'Número de assistências não pode superar o número de gols.');
-            return;
-        }
-
-        try {
-            await addDoc(collection(db, 'teams', teamId, 'matches', matchId, 'events'), {
-                matchId,
-                playerId,
-                playerName,
-                type,
-                createdAt: Timestamp.now()
-            });
-        } catch (e) {
-            console.error(e);
-            Alert.alert('Erro', 'Falha ao adicionar evento.');
-        }
-    };
-
-    const handleRemoveLastEvent = async (playerId: string, type: 'goal' | 'assist') => {
-        const playerEvents = events.filter(e => e.playerId === playerId && e.type === type);
-        if (playerEvents.length === 0) return;
-        const lastEvent = playerEvents[playerEvents.length - 1];
-        try {
-            await deleteDoc(doc(db, 'teams', teamId!, 'matches', matchId, 'events', lastEvent.id));
-        } catch (e) {
-            Alert.alert('Erro', 'Falha ao remover evento.');
-        }
-    };
-
-    const handleUpdateScore = async () => {
-        if (!match || !teamId) return;
-        try {
-            await updateDoc(doc(db, 'teams', teamId, 'matches', matchId), {
-                scoreHome: parseInt(scoreHome) || 0,
-                scoreAway: parseInt(scoreAway) || 0
-            });
-            Alert.alert('Sucesso', 'Placar atualizado.');
-        } catch (e) {
-            Alert.alert('Erro', 'Erro ao salvar placar.');
-        }
-    };
+    const absentPlayers = useMemo(() => {
+        if (!match?.presence) return [];
+        return Object.entries(match.presence)
+            .filter(([_, p]) => p.status === 'out')
+            .map(([id, p]) => ({ id, ...p }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [match?.presence]);
 
     const handleFinalizeMatch = async () => {
         if (!match || !teamId) return;
@@ -285,20 +278,19 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     }
 
     const handlePaymentAction = async (playerId: string) => {
-        const payment = payments[playerId];
-        if (!payment || payment.status === 'paid' || (!isOwner && currentRole !== 'coach')) return;
+        const transaction = paymentsMap[playerId];
+        if (!transaction || transaction.status === 'paid' || (!isOwner && currentRole !== 'coach')) return;
 
         Alert.alert(
-            'Confirmar Pagamento',
-            'Deseja marcar este pagamento como PAGO?',
+            'Receber Pagamento',
+            `Confirmar recebimento de R$ ${transaction.amount}?`,
             [
                 { text: 'Cancelar', style: 'cancel' },
                 {
-                    text: 'Confirmar',
+                    text: 'Confirmar Recebimento',
                     onPress: async () => {
                         try {
-                            if (!myPlayerProfile?.userId) return;
-                            await BillingService.markPaymentAsPaid(teamId!, 'PER_GAME', payment.id, matchId, myPlayerProfile.userId);
+                            await TransactionService.markAsPaid(teamId!, transaction.id);
                         } catch (e) {
                             Alert.alert('Erro', 'Falha ao confirmar pagamento.');
                         }
@@ -315,6 +307,31 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         return 'out';
     };
 
+    // Helper to find player name
+    const getPlayerName = (id: string) => {
+        const p = confirmedPlayers.find(cp => cp.id === id);
+        return p ? p.name : 'Desconhecido';
+    };
+
+    // New Function to view votes
+    const handleViewVotes = async () => {
+        if (!teamId || !matchId) return;
+        setLoading(true);
+        try {
+            const votesRef = collection(db, 'teams', teamId, 'matches', matchId, 'votes');
+            const snap = await getDocs(votesRef);
+            const list: any[] = [];
+            snap.forEach(d => list.push(d.data()));
+            setAllVotes(list);
+            setShowVotesModal(true);
+        } catch (e) {
+            console.error(e);
+            Alert.alert("Erro", "Erro ao carregar votos.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     if (loading) {
         return (
             <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
@@ -325,6 +342,50 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
 
     return (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 bg-[#F8FAFC]">
+            {/* Modal for Votes */}
+            <Modal visible={showVotesModal} animationType="slide" transparent={true}>
+                <View className="flex-1 bg-black/50 justify-end">
+                    <View className="bg-white rounded-t-3xl h-[80%] p-6">
+                        <View className="flex-row justify-between items-center mb-6">
+                            <Text className="text-lg font-black italic text-slate-900 uppercase">VOTAÇÃO DETALHADA</Text>
+                            <TouchableOpacity onPress={() => setShowVotesModal(false)} className="p-2 bg-slate-100 rounded-full">
+                                <X size={20} color="#64748B" />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            {allVotes.length === 0 ? (
+                                <Text className="text-slate-400 italic text-center mt-10">Nenhum voto registrado.</Text>
+                            ) : (
+                                allVotes.map((v, index) => {
+                                    // v.playerId is the player ID who voted.
+                                    const voterName = getPlayerName(v.playerId);
+
+                                    return (
+                                        <View key={index} className="mb-6 border-b border-slate-100 pb-4">
+                                            <Text className="font-bold text-slate-800 mb-2">👤 {voterName} votou:</Text>
+
+                                            {/* Ratings */}
+                                            {v.ratings && Object.entries(v.ratings).map(([targetId, rating]) => (
+                                                <Text key={targetId} className="text-xs text-slate-600 ml-4 mb-1">
+                                                    • {getPlayerName(targetId as string)}: <Text className="font-bold text-blue-600">{Number(rating).toFixed(1)}</Text>
+                                                </Text>
+                                            ))}
+
+                                            {/* Best Player Vote */}
+                                            {v.bestPlayerVote && (
+                                                <Text className="text-xs text-[#006400] font-bold ml-4 mt-1">
+                                                    🏆 Craque: {getPlayerName(v.bestPlayerVote)}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    );
+                                })
+                            )}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
             <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
 
                 {/* Header Section */}
@@ -356,7 +417,13 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                     <Calendar size={18} color="#94A3B8" />
                                     <Text className="ml-2 font-bold text-slate-600">{format(date, "dd/MM/yyyy HH:mm")}</Text>
                                 </View>
-                                <TouchableOpacity onPress={() => setShowDatePicker(true)} className="bg-slate-900 px-4 py-2 rounded-lg">
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        setDatePickerMode('date');
+                                        setShowDatePicker(true);
+                                    }}
+                                    className="bg-slate-900 px-4 py-2 rounded-lg"
+                                >
                                     <Text className="text-white font-black italic uppercase text-[10px] tracking-widest">ALTERAR</Text>
                                 </TouchableOpacity>
                             </View>
@@ -385,7 +452,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                 )}
                             </View>
 
-                            {/* Scoreboard */}
+                            {/* Scoreboard - Read Only */}
                             <View className="flex-row justify-between items-center px-4 mb-4">
                                 <View className="items-center flex-1">
                                     <View className="w-16 h-16 bg-slate-900 rounded-3xl items-center justify-center mb-2">
@@ -395,25 +462,9 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                 </View>
 
                                 <View className="flex-row items-center gap-4">
-                                    {canEditStats ? (
-                                        <View className="flex-row items-center gap-2">
-                                            <TextInput
-                                                className="bg-slate-100 w-14 h-14 rounded-2xl text-center text-3xl font-black italic text-slate-900"
-                                                value={scoreHome} onChangeText={setScoreHome} keyboardType="numeric"
-                                            />
-                                            <Text className="text-slate-300 font-black italic text-xl">X</Text>
-                                            <TextInput
-                                                className="bg-slate-100 w-14 h-14 rounded-2xl text-center text-3xl font-black italic text-slate-900"
-                                                value={scoreAway} onChangeText={setScoreAway} keyboardType="numeric"
-                                            />
-                                        </View>
-                                    ) : (
-                                        <View className="flex-row items-center gap-4">
-                                            <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreHome}</Text>
-                                            <Text className="text-slate-300 font-black italic text-2xl">X</Text>
-                                            <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreAway}</Text>
-                                        </View>
-                                    )}
+                                    <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreHome || 0}</Text>
+                                    <Text className="text-slate-300 font-black italic text-2xl">X</Text>
+                                    <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreAway || 0}</Text>
                                 </View>
 
                                 <View className="items-center flex-1">
@@ -448,8 +499,39 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                 {/* Match Center / Presence */}
                 <View className="px-6">
 
-                    {/* Attendance Selector */}
-                    {match?.status !== 'finished' || isOwner ? (
+                    {/* AWARDS SECTION (NEW) */}
+                    {match?.status === 'finished' && match.awards && (
+                        <View className="mb-8 flex-row gap-4">
+                            {/* Best Player */}
+                            <View className="flex-1 bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-2xl border border-orange-100 items-center shadow-sm">
+                                <Text className="text-[8px] font-black uppercase text-orange-400 tracking-widest mb-2">MELHOR DA PARTIDA</Text>
+                                <View className="w-12 h-12 bg-orange-400 rounded-full items-center justify-center mb-2 shadow-sm">
+                                    <Trophy size={20} color="white" />
+                                </View>
+                                <Text className="font-black italic text-slate-800 text-center text-sm" numberOfLines={1}>
+                                    {match.awards.bestPlayerId ? getPlayerName(match.awards.bestPlayerId) : '-'}
+                                </Text>
+                                <Text className="text-[10px] text-orange-400 font-bold mt-1">Nota: {match.awards.bestPlayerScore?.toFixed(1) || '-'}</Text>
+                            </View>
+
+                            {/* Crowd Favorite */}
+                            <View className="flex-1 bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-2xl border border-emerald-100 items-center shadow-sm">
+                                <Text className="text-[8px] font-black uppercase text-emerald-500 tracking-widest mb-2">CRAQUE DA GALERA</Text>
+                                <View className="w-12 h-12 bg-emerald-500 rounded-full items-center justify-center mb-2 shadow-sm">
+                                    <Users size={20} color="white" />
+                                </View>
+                                <Text className="font-black italic text-slate-800 text-center text-sm" numberOfLines={1}>
+                                    {match.awards.crowdFavoriteId ? getPlayerName(match.awards.crowdFavoriteId) : '-'}
+                                </Text>
+                                <Text className="text-[10px] text-emerald-500 font-bold mt-1">
+                                    {match.awards.crowdFavoriteVotes || 0} Votos
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Attendance Selector - Show if match open OR if owner */}
+                    {(match?.status !== 'finished' || isOwner) && (myPlayerProfile?.isAthlete || isOwner) ? (
                         <View className="mb-8">
                             <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">SUA PRESENÇA</Text>
                             <View className="flex-row bg-white p-1 rounded-2xl border border-slate-100 shadow-sm">
@@ -459,13 +541,6 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                 >
                                     <CheckCircle2 size={16} color={getMyStatus() === 'confirmed' ? 'white' : '#94A3B8'} />
                                     <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'confirmed' ? 'text-white' : 'text-slate-400'}`}>Vou</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'maybe' ? 'bg-orange-400' : 'bg-transparent'}`}
-                                    onPress={() => handlePresence('maybe')}
-                                >
-                                    <HelpCircle size={16} color={getMyStatus() === 'maybe' ? 'white' : '#94A3B8'} />
-                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'maybe' ? 'text-white' : 'text-slate-400'}`}>Talvez</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'out' ? 'bg-red-500' : 'bg-transparent'}`}
@@ -478,17 +553,64 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                         </View>
                     ) : null}
 
+
+                    {/* Voting Action - Players */}
+                    {match?.status === 'finished' && (
+                        (() => {
+                            const myPresence = match.presence?.[myPlayerProfile?.id || ''];
+                            const myStats = match.stats?.[myPlayerProfile?.id || ''];
+                            const isEligible = myPresence?.status === 'confirmed' && !myStats?.faltou;
+
+                            if (isEligible) {
+                                return (
+                                    <View className="mb-6">
+                                        <TouchableOpacity
+                                            onPress={() => navigation.navigate('MatchVoting', { matchId: match.id })}
+                                            className="bg-purple-600 p-4 rounded-2xl flex-row justify-center items-center shadow-lg shadow-purple-200"
+                                        >
+                                            <Trophy size={20} color="white" />
+                                            <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">AVALIAR COMPANHEIROS</Text>
+                                            <View className="ml-2 bg-purple-800 px-2 py-1 rounded-full">
+                                                <Text className="text-white text-[8px] font-bold">VOTAÇÃO ABERTA</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    </View>
+                                );
+                            }
+                            return null;
+                        })()
+                    )}
+
                     {/* Admin Actions */}
-                    {canEditStats && match?.status !== 'finished' && (
-                        <View className="flex-row gap-3 mb-8">
-                            <TouchableOpacity className="flex-1 bg-slate-900 flex-row justify-center items-center py-4 rounded-2xl shadow-lg shadow-slate-300" onPress={handleUpdateScore}>
-                                <Save size={18} color="white" />
-                                <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">PLACAR</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity className="flex-1 bg-red-600 flex-row justify-center items-center py-4 rounded-2xl shadow-lg shadow-red-200" onPress={handleFinalizeMatch}>
-                                <Flag size={18} color="white" />
-                                <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">FINALIZAR</Text>
-                            </TouchableOpacity>
+                    {canEditStats && (
+                        <View className="mb-8">
+                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">GESTÃO DA PARTIDA</Text>
+                            <View className="gap-3">
+
+                                <TouchableOpacity
+                                    className="bg-white border border-slate-200 flex-row justify-center items-center py-4 rounded-2xl shadow-sm"
+                                    onPress={() => navigation.navigate('MatchSummary', { matchId })}
+                                >
+                                    <Target size={18} color="#0F172A" />
+                                    <Text className="ml-2 text-slate-900 font-black italic uppercase text-[10px] tracking-widest">GESTÃO DE SÚMULA (PLACAR/GOLS/NOTAS)</Text>
+                                </TouchableOpacity>
+
+                                {/* NEW: VIEW VOTES BUTTON */}
+                                <TouchableOpacity
+                                    className="bg-white border border-slate-200 flex-row justify-center items-center py-4 rounded-2xl shadow-sm"
+                                    onPress={handleViewVotes}
+                                >
+                                    <Users size={18} color="#0F172A" />
+                                    <Text className="ml-2 text-slate-900 font-black italic uppercase text-[10px] tracking-widest">VER VOTOS DETALHADOS (ADMIN)</Text>
+                                </TouchableOpacity>
+
+                                {match?.status !== 'finished' && (
+                                    <TouchableOpacity className="bg-red-600 flex-row justify-center items-center py-4 rounded-2xl shadow-lg shadow-red-200" onPress={handleFinalizeMatch}>
+                                        <Flag size={18} color="white" />
+                                        <Text className="ml-2 text-white font-black italic uppercase text-[10px] tracking-widest">FINALIZAR PARTIDA</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                         </View>
                     )}
 
@@ -502,7 +624,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                     {/* Stats Center */}
                     <View className="mb-8">
                         <View className="flex-row justify-between items-end mb-4">
-                            <Text className="text-xl font-black italic text-slate-900 tracking-tighter">MATCH CENTER</Text>
+                            <Text className="text-xl font-black italic text-slate-900 tracking-tighter">CENTRAL DA PARTIDA</Text>
                             <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{confirmedPlayers.length} PRESENTES</Text>
                         </View>
 
@@ -510,7 +632,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                             <View className="gap-3">
                                 {confirmedPlayers.map((p) => {
                                     const pStats = statsByPlayer[p.id] || { goals: 0, assists: 0 };
-                                    const payment = payments[p.id];
+                                    const payment = paymentsMap[p.id]; // Use paymentsMap
                                     return (
                                         <Card key={p.id} className="p-4 border-slate-50 shadow-sm">
                                             <View className="flex-row items-center justify-between">
@@ -538,31 +660,6 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                                         </Text>
                                                     </TouchableOpacity>
                                                 )}
-
-                                                {canEditStats && (
-                                                    <View className="flex-row gap-2 ml-4">
-                                                        {/* Goals Control */}
-                                                        <View className="flex-row items-center bg-slate-50 rounded-xl p-1 border border-slate-100">
-                                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'goal')} className="p-1">
-                                                                <Minus size={14} color="#EF4444" />
-                                                            </TouchableOpacity>
-                                                            <Text className="font-black italic text-[10px] px-1">G</Text>
-                                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'goal')} className="p-1">
-                                                                <Plus size={14} color="#10B981" />
-                                                            </TouchableOpacity>
-                                                        </View>
-                                                        {/* Assists Control */}
-                                                        <View className="flex-row items-center bg-slate-50 rounded-xl p-1 border border-slate-100">
-                                                            <TouchableOpacity onPress={() => handleRemoveLastEvent(p.id, 'assist')} className="p-1">
-                                                                <Minus size={14} color="#EF4444" />
-                                                            </TouchableOpacity>
-                                                            <Text className="font-black italic text-[10px] px-1">A</Text>
-                                                            <TouchableOpacity onPress={() => handleAddEvent(p.id, p.name, 'assist')} className="p-1">
-                                                                <Plus size={14} color="#10B981" />
-                                                            </TouchableOpacity>
-                                                        </View>
-                                                    </View>
-                                                )}
                                             </View>
                                         </Card>
                                     );
@@ -576,20 +673,69 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                         )}
                     </View>
 
+                    {/* Absent Players */}
+                    {absentPlayers.length > 0 && (
+                        <View className="mb-8 opacity-75">
+                            <View className="flex-row justify-between items-end mb-4">
+                                <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{absentPlayers.length} NÃO VÃO</Text>
+                            </View>
+
+                            <View className="gap-2">
+                                {absentPlayers.map((p) => (
+                                    <View key={p.id} className="p-3 bg-slate-50 rounded-xl flex-row items-center border border-slate-100">
+                                        <XCircle size={14} color="#94A3B8" />
+                                        <Text className="ml-2 font-bold text-slate-500 text-xs">{p.name}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
+                    )}
+
                 </View>
 
-                {showDatePicker && (
-                    <DateTimePicker
-                        value={date}
-                        mode="date"
-                        display="default"
-                        onChange={(_, selectedDate) => {
-                            setShowDatePicker(false);
-                            if (selectedDate) setDate(selectedDate);
-                        }}
-                    />
-                )}
-            </ScrollView>
-        </KeyboardAvoidingView>
+                {
+                    showDatePicker && (
+                        <DateTimePicker
+                            value={date}
+                            mode={datePickerMode}
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            onChange={(_, selectedDate) => {
+                                if (Platform.OS === 'android') {
+                                    setShowDatePicker(false);
+                                    if (selectedDate) {
+                                        // If we just set the date, now set the time
+                                        if (datePickerMode === 'date') {
+                                            const currentDate = selectedDate;
+                                            // Keep the time from the previous date state if needed, or just set date part
+                                            // Standard: set date part, then ask for time
+                                            const newDate = new Date(date);
+                                            newDate.setFullYear(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+                                            setDate(newDate);
+
+                                            // Open Time Picker
+                                            setTimeout(() => {
+                                                setDatePickerMode('time');
+                                                setShowDatePicker(true);
+                                            }, 100);
+                                        } else {
+                                            // We just set the time
+                                            const timeDate = selectedDate;
+                                            const newDate = new Date(date);
+                                            newDate.setHours(timeDate.getHours());
+                                            newDate.setMinutes(timeDate.getMinutes());
+                                            setDate(newDate);
+                                        }
+                                    }
+                                } else {
+                                    // iOS - simplified, usually we might use 'datetime' or keep open
+                                    setShowDatePicker(false);
+                                    if (selectedDate) setDate(selectedDate);
+                                }
+                            }}
+                        />
+                    )
+                }
+            </ScrollView >
+        </KeyboardAvoidingView >
     );
 }

@@ -52,8 +52,8 @@ export default function LoginScreen({ navigation }: any) {
             console.log("Attempting login...");
             await signInWithEmailAndPassword(auth, email, password);
             console.log("Login successful, waiting for auth state change...");
-            setLoading(false); // Clear loading state so button enables if redirection lags
-            // Navigation will be handled by onAuthStateChanged in AppNavigator
+            // Restore setLoading(false) to avoid UI lockup if navigation lags
+            setLoading(false);
         } catch (e: any) {
             console.error("Login error:", e);
             setError('Credenciais inválidas. Verifique seu email e senha.');

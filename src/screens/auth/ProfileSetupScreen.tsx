@@ -9,7 +9,7 @@ import { User } from 'lucide-react-native';
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
-export default function ProfileSetupScreen() {
+export default function ProfileSetupScreen({ navigation }: any) {
     const { authUser, setUserData } = useAuthStore();
     const [name, setName] = useState(authUser?.displayName || '');
     const [nickname, setNickname] = useState('');

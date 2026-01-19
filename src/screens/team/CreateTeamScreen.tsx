@@ -1,61 +1,25 @@
 import React, { useState } from 'react';
-import { View, Alert, TouchableOpacity, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useAuthStore } from '@/stores/authStore';
-import { db, storage, firebaseConfig } from '@/services/firebase';
+import { db, firebaseConfig } from '@/services/firebase';
 import { collection, addDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import * as ImagePicker from 'expo-image-picker';
 import { useTeamStore } from '@/stores/teamStore';
 import { Player, Team } from '@/types/models';
-import { ArrowLeft, CheckCircle2, Shield, Camera } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2 } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
-
-const TEAM_COLORS = [
-    { name: 'Verde', value: '#006400' },
-    { name: 'Azul', value: '#1E40AF' },
-    { name: 'Vermelho', value: '#B91C1C' },
-    { name: 'Preto', value: '#111827' },
-    { name: 'Roxo', value: '#6B21A8' },
-];
 
 export default function CreateTeamScreen({ navigation }: any) {
     const { user } = useAuthStore();
     const setTeamContext = useTeamStore(state => state.setTeamContext);
 
     const [teamName, setTeamName] = useState('');
-    const [selectedColor, setSelectedColor] = useState(TEAM_COLORS[0].value);
-    const [shieldUri, setShieldUri] = useState<string | null>(null);
+    const [billingMode, setBillingMode] = useState<'PER_GAME' | 'MONTHLY' | 'MONTHLY_PLUS_GAME'>('PER_GAME');
     const [loading, setLoading] = useState(false);
     const [step, setStep] = useState<'form' | 'success'>('form');
 
-    const handlePickShield = async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.8,
-        });
 
-        if (!result.canceled) {
-            setShieldUri(result.assets[0].uri);
-        }
-    };
-
-    const uploadShield = async (uri: string, teamId: string): Promise<string | null> => {
-        try {
-            const response = await fetch(uri);
-            const blob = await response.blob();
-            const filename = `shields/${teamId}_${Date.now()}.jpg`;
-            const storageRef = ref(storage, filename);
-            await uploadBytes(storageRef, blob);
-            return await getDownloadURL(storageRef);
-        } catch (error) {
-            console.error("Upload failed", error);
-            return null;
-        }
-    };
 
     const handleCreateTeam = async () => {
         if (!teamName.trim() || !user) {
@@ -81,9 +45,9 @@ export default function CreateTeamScreen({ navigation }: any) {
                 status: 'active',
                 members: { [user.id]: 'owner' },
                 memberIds: [user.id],
-                billingMode: 'PER_GAME',
+                billingMode: billingMode,
                 perGameAmount: 0,
-                primaryColor: selectedColor,
+                primaryColor: '#006400',
                 id: newTeamRef.id,
                 // shieldURL will be updated after if exists
             } as Team);
@@ -103,13 +67,7 @@ export default function CreateTeamScreen({ navigation }: any) {
                 }, { merge: true });
             }
 
-            let uploadedShieldUrl = null;
-            if (shieldUri) {
-                uploadedShieldUrl = await uploadShield(shieldUri, newTeamRef.id);
-                if (uploadedShieldUrl) {
-                    await updateDoc(newTeamRef, { badgeURL: uploadedShieldUrl });
-                }
-            }
+
 
             // 2. Create Owner Player Profile
             const playerProfileData = {
@@ -182,29 +140,14 @@ export default function CreateTeamScreen({ navigation }: any) {
 
                     <View className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 items-center">
 
-                        {/* Shield Upload */}
-                        <TouchableOpacity onPress={handlePickShield} className="items-center mb-8 relative">
-                            <View className="w-24 h-24 bg-slate-50 rounded-full items-center justify-center shadow-inner border border-slate-200 overflow-hidden">
-                                {shieldUri ? (
-                                    <Image source={{ uri: shieldUri }} className="w-full h-full" resizeMode="cover" />
-                                ) : (
-                                    <Shield size={40} color={selectedColor} />
-                                )}
-                            </View>
-                            <View className="absolute bottom-0 right-0 bg-slate-900 w-8 h-8 rounded-full items-center justify-center border-2 border-white">
-                                <Camera size={14} color="white" />
-                            </View>
-                        </TouchableOpacity>
-
-                        <Text className="text-slate-900 font-bold text-center text-lg mb-2">
-                            Defina a identidade
+                        <Text className="text-slate-900 font-bold text-center text-lg mb-6">
+                            Nome do Clube
                         </Text>
 
                         {/* Team Name */}
-                        <View className="w-full mb-6">
-                            <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2 ml-1">NOME DO CLUBE</Text>
+                        <View className="w-full mb-8">
                             <TextInput
-                                className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-black text-xl"
+                                className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-black text-xl text-center"
                                 placeholder="Ex: Galáticos FC"
                                 placeholderTextColor="#CBD5E1"
                                 value={teamName}
@@ -213,21 +156,28 @@ export default function CreateTeamScreen({ navigation }: any) {
                             />
                         </View>
 
-                        {/* Colors */}
-                        <View className="w-full mb-8">
-                            <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3 ml-1">COR PRINCIPAL</Text>
-                            <View className="flex-row justify-between">
-                                {TEAM_COLORS.map((c) => (
-                                    <TouchableOpacity
-                                        key={c.value}
-                                        onPress={() => setSelectedColor(c.value)}
-                                        className={`w-10 h-10 rounded-full border-2 items-center justify-center ${selectedColor === c.value ? 'border-slate-900 scale-110' : 'border-transparent'}`}
-                                    >
-                                        <View className="w-8 h-8 rounded-full" style={{ backgroundColor: c.value }} />
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
+                        {/* Billing Mode Selection */}
+                        <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-3">
+                            Modelo Financeiro
+                        </Text>
+                        <View className="w-full mb-8 flex-row gap-2">
+                            {[
+                                { id: 'PER_GAME', label: 'POR JOGO', icon: 'TICKET' },
+                                { id: 'MONTHLY', label: 'MENSAL', icon: 'CALENDAR' },
+                                { id: 'MONTHLY_PLUS_GAME', label: 'HÍBRIDO', icon: 'MIX' },
+                            ].map((mode: any) => (
+                                <TouchableOpacity
+                                    key={mode.id}
+                                    onPress={() => setBillingMode(mode.id)}
+                                    className={`flex-1 p-3 rounded-xl border items-center justify-center ${billingMode === mode.id ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-200'}`}
+                                >
+                                    <Text className={`font-black text-[10px] italic ${billingMode === mode.id ? 'text-white' : 'text-slate-400'}`}>
+                                        {mode.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
+
 
                         <ButtonPrimary
                             label={loading ? "FUNDANDO CLUBE..." : "CRIAR TIME ELITE"}

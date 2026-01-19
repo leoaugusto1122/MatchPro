@@ -58,12 +58,14 @@ export interface MonthlyPayment {
 
 export interface Player {
     id: string; // Document ID in 'players' collection
+    isAthlete?: boolean; // Determines if they play in matches
+    isGhost?: boolean; // If true, not linked to a real auth user
     name: string;
     nickname?: string; // Apelido
     photoURL?: string;
     position?: 'GK' | 'DEF' | 'MID' | 'FWD';
     dominantFoot?: 'Destro' | 'Canhoto' | 'Ambidestro';
-    status: 'active' | 'reserve';
+    status: 'active' | 'inactive'; // Changed from reserve to inactive
     userId?: string; // Optional: Link to Auth User
     authId?: string; // Legacy/Duplicate of userId
     role?: 'owner' | 'coach' | 'staff' | 'player';
@@ -112,6 +114,8 @@ export interface Match {
     // Presence: { [playerId]: { status: PresenceStatus, playerName: string } }
     presence?: Record<string, { status: PresenceStatus, name: string, isGhost?: boolean }>;
 
+    // New Summary & Stats
+    stats?: Record<string, PlayerMatchStats>; // userId -> stats
     // Voting
     votingStatus?: 'hidden' | 'open' | 'closed';
     votingDeadline?: any; // Firestore Timestamp
@@ -121,6 +125,31 @@ export interface Match {
         motm?: string; // playerId
         totalVotes: number;
     };
+
+    // Awards - Calculated on finalize
+    awards?: {
+        bestPlayerId: string | null;
+        bestPlayerScore: number;
+        crowdFavoriteId: string | null;
+        crowdFavoriteVotes: number;
+    };
+}
+
+export interface PlayerMatchStats {
+    goals: number;
+    assists: number;
+    notaTecnica?: number;
+    avaliadorTecnicoId?: string; // Owner/Coach ID who gave the rating
+    faltou?: boolean; // If true, marked as missed even if confirmed
+}
+
+export interface SocialVote {
+    id?: string;
+    fromUserId: string;
+    toUserId: string;
+    matchId: string;
+    rating: number; // 1-10 or 1-5
+    createdAt: any;
 }
 
 export interface MatchVote {
@@ -145,3 +174,23 @@ export interface MatchEvent {
     createdAt: any; // Firestore Timestamp
 }
 
+
+export type TransactionType = 'income' | 'expense';
+export type TransactionCategory = 'monthly' | 'game' | 'other';
+export type TransactionStatus = 'pending' | 'paid';
+
+export interface Transaction {
+    id: string;
+    teamId: string;
+    playerId?: string; // Optional if generic expense
+    type: TransactionType;
+    category: TransactionCategory;
+    description: string;
+    amount: number;
+    date: any; // Firestore Timestamp
+    status: TransactionStatus;
+    gameId?: string; // Links to a match
+    paidAt?: any;
+    createdAt?: any;
+    createdBy?: string;
+}

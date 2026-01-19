@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+// import { useRoute, useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 import { doc, getDoc, addDoc, collection, query, where, getDocs, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -11,9 +11,9 @@ import { Team } from '@/types/models';
 import { Header } from '@/components/ui/Header';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function JoinTeamScreen() {
-    const route = useRoute<any>();
-    const navigation = useNavigation<any>();
+export default function JoinTeamScreen({ route, navigation }: any) {
+    // const route = useRoute<any>(); // Removed
+    // const navigation = useNavigation<any>(); // Removed
     const { user, authUser } = useAuthStore();
 
     // Steps:
