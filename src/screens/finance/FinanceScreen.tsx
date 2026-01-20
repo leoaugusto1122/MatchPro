@@ -1,20 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, Text, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
-import { Transaction } from '@/types/models';
+import { Transaction, Player } from '@/types/models';
 import { TransactionService } from '@/services/transactionService';
-import { format, isSameDay, isACfter, subDays, startOfMonth, isAfter } from 'date-fns';
-import { TrendingUp, TrendingDown, Wallet, Plus, AlertTriangle, Filter, X } from 'lucide-react-native';
+import { format, isSameDay, subDays, startOfMonth, isAfter } from 'date-fns';
+import { TrendingUp, TrendingDown, Wallet, AlertTriangle, X } from 'lucide-react-native';
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
+import { db } from '@/services/firebase';
+import { collection, getDocs, query } from 'firebase/firestore';
 
-export default function FinanceScreen() {
+export default function FinanceScreen({ route }: any) {
     const teamId = useTeamStore(state => state.teamId);
     const { currentRole } = useTeamStore(state => state);
     const isAdmin = currentRole === 'owner' || currentRole === 'staff';
 
     const [loading, setLoading] = useState(true);
     const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+    const [playerMap, setPlayerMap] = useState<Record<string, string>>({});
 
     // Filters
     const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
@@ -22,18 +25,54 @@ export default function FinanceScreen() {
 
     // Modal State
     const [showModal, setShowModal] = useState(false);
+    const [editId, setEditId] = useState<string | null>(null);
     const [txType, setTxType] = useState<'income' | 'expense'>('expense');
     const [desc, setDesc] = useState('');
     const [amount, setAmount] = useState('');
 
     useEffect(() => {
+        if (route?.params?.action) {
+            setEditId(null); // Ensure new
+            setDesc('');
+            setAmount('');
+            if (route.params.action === 'new_income') {
+                setTxType('income');
+                setShowModal(true);
+            } else if (route.params.action === 'new_expense') {
+                setTxType('expense');
+                setShowModal(true);
+            }
+            // Reset params to avoid reopening (optional, but good practice if nav persists)
+            // In this custom nav, params might persist until overwritten.
+        }
+    }, [route?.params]);
+
+    useEffect(() => {
         if (!teamId) return;
         setLoading(true);
 
+        // Fetch Transactions
         const unsub = TransactionService.subscribeToAllTransactions(teamId, (data) => {
             setAllTransactions(data);
             setLoading(false);
         });
+
+        // Fetch Players for Lookup
+        const fetchPlayers = async () => {
+            try {
+                const q = query(collection(db, 'teams', teamId, 'players'));
+                const snap = await getDocs(q);
+                const map: Record<string, string> = {};
+                snap.forEach(doc => {
+                    const p = doc.data() as Player;
+                    map[doc.id] = p.name;
+                });
+                setPlayerMap(map);
+            } catch (e) {
+                console.error("Error fetching players for finance lookup", e);
+            }
+        };
+        fetchPlayers();
 
         return () => unsub();
     }, [teamId]);
@@ -96,23 +135,62 @@ export default function FinanceScreen() {
         };
     }, [allTransactions, dateFilter, typeFilter]);
 
+    const handleEdit = (t: Transaction) => {
+        if (!isAdmin) return;
+        setEditId(t.id);
+        setTxType(t.type);
+        setDesc(t.description);
+        setAmount(t.amount.toString());
+        setShowModal(true);
+    };
+
+    const handleDelete = async () => {
+        if (!editId || !teamId) return;
+        Alert.alert('Excluir', 'Tem certeza?', [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+                text: 'Sim, excluir',
+                style: 'destructive',
+                onPress: async () => {
+                    await TransactionService.deleteTransaction(teamId, editId);
+                    setShowModal(false);
+                    setEditId(null);
+                }
+            }
+        ]);
+    };
+
     const handleSave = async () => {
         if (!amount || !desc || !teamId) return;
         try {
-            await TransactionService.createTransaction(teamId, {
-                type: txType,
-                amount: parseFloat(amount.replace(',', '.')),
-                description: desc,
-                category: 'other',
-                date: new Date(),
-                status: 'paid' // "Lançamentos" implied as immediate cash flow unless specified otherwise
-            } as any);
+            const val = parseFloat(amount.replace(',', '.'));
+
+            if (editId) {
+                // Update
+                await TransactionService.updateTransaction(teamId, editId, {
+                    type: txType,
+                    amount: val,
+                    description: desc
+                });
+                Alert.alert('Sucesso', 'Lançamento atualizado!');
+            } else {
+                // Create
+                await TransactionService.createTransaction(teamId, {
+                    type: txType,
+                    amount: val,
+                    description: desc,
+                    category: 'other',
+                    date: new Date(),
+                    status: 'paid'
+                } as any);
+                Alert.alert('Sucesso', 'Lançamento registrado!');
+            }
             setShowModal(false);
+            setEditId(null);
             setAmount('');
             setDesc('');
-            Alert.alert('Sucesso', 'Lançamento registrado!');
         } catch (error) {
-            Alert.alert('Erro', 'Falha ao registrar.');
+            Alert.alert('Erro', 'Falha ao salvar.');
         }
     };
 
@@ -219,27 +297,44 @@ export default function FinanceScreen() {
                         <Text className="text-center text-slate-400 italic text-xs py-10">Nenhum lançamento encontrado.</Text>
                     ) : (
                         filteredList.map(t => (
-                            <Card key={t.id} className="p-4 flex-row items-center border-l-4 border-l-transparent" style={{ borderLeftColor: t.status === 'pending' ? '#F59E0B' : t.type === 'income' ? '#10B981' : '#EF4444' }}>
-                                <View className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${t.type === 'income' ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                                    {t.type === 'income' ? <TrendingUp size={16} color="#10B981" /> : <TrendingDown size={16} color="#EF4444" />}
-                                </View>
-                                <View className="flex-1">
-                                    <Text className="font-bold text-slate-800 text-xs uppercase">{t.description}</Text>
-                                    <Text className="text-[10px] text-slate-400 font-bold mt-0.5">
-                                        {t.date && t.date.seconds ? format(new Date(t.date.seconds * 1000), 'dd/MM') : 'Hoje'} • <Text className={t.status === 'pending' ? 'text-amber-500' : 'text-slate-500'}>{t.status === 'pending' ? 'PENDENTE' : 'PAGO'}</Text>
-                                    </Text>
-                                </View>
-                                <Text className={`font-black italic text-sm ${t.type === 'income' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                    {t.type === 'income' ? '+' : '-'} R$ {Number(t.amount).toFixed(2)}
-                                </Text>
-                            </Card>
+                            <TouchableOpacity
+                                key={t.id}
+                                activeOpacity={isAdmin ? 0.7 : 1}
+                                onPress={() => isAdmin && handleEdit(t)}
+                            >
+                                <Card className="p-4 flex-row items-center border-l-4 border-l-transparent" style={{ borderLeftColor: t.status === 'pending' ? '#F59E0B' : t.type === 'income' ? '#10B981' : '#EF4444' }}>
+                                    <View className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${t.type === 'income' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                                        {t.type === 'income' ? <TrendingUp size={16} color="#10B981" /> : <TrendingDown size={16} color="#EF4444" />}
+                                    </View>
+                                    <View className="flex-1 pr-2">
+                                        <Text className="font-bold text-slate-800 text-xs uppercase" numberOfLines={1}>{t.description}</Text>
+
+                                        {/* Player Name if available */}
+                                        {t.playerId && playerMap[t.playerId] && (
+                                            <Text className="text-[10px] text-slate-500 italic mt-0.5">
+                                                Pago por: <Text className="font-bold">{playerMap[t.playerId]}</Text>
+                                            </Text>
+                                        )}
+
+                                        <Text className="text-[10px] text-slate-400 font-bold mt-0.5">
+                                            {t.date && t.date.seconds ? format(new Date(t.date.seconds * 1000), 'dd/MM') : 'Hoje'} • <Text className={t.status === 'pending' ? 'text-amber-500' : 'text-slate-500'}>{t.status === 'pending' ? 'PENDENTE' : 'PAGO'}</Text>
+                                        </Text>
+                                    </View>
+                                    <View>
+                                        <Text className={`font-black italic text-sm text-right ${t.type === 'income' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                            {t.type === 'income' ? '+' : '-'} R$ {Number(t.amount).toFixed(2)}
+                                        </Text>
+                                        {isAdmin && <Text className="text-[8px] text-slate-300 font-bold text-right uppercase mt-1">Editar</Text>}
+                                    </View>
+                                </Card>
+                            </TouchableOpacity>
                         ))
                     )}
                 </View>
             </ScrollView>
 
-            {/* Quick Actions (Admin Only) */}
-            {isAdmin && (
+            {/* Quick Actions (Admin Only) - Moved to Main FAB */}
+            {/* {isAdmin && (
                 <View className="absolute bottom-6 right-6 flex-row gap-3">
                     <TouchableOpacity onPress={() => { setTxType('expense'); setShowModal(true); }} className="bg-red-500 w-14 h-14 rounded-full items-center justify-center shadow-lg shadow-red-500/40">
                         <TrendingDown size={24} color="white" />
@@ -248,7 +343,7 @@ export default function FinanceScreen() {
                         <Plus size={24} color="white" />
                     </TouchableOpacity>
                 </View>
-            )}
+            )} */}
 
             {/* Modal */}
             <Modal visible={showModal} animationType="slide" transparent>
@@ -256,11 +351,18 @@ export default function FinanceScreen() {
                     <View className="bg-white p-6 rounded-t-3xl">
                         <View className="flex-row justify-between items-center mb-6">
                             <Text className="text-xl font-black italic text-slate-900 uppercase">
-                                Nova {txType === 'income' ? 'Entrada' : 'Saída'}
+                                {editId ? 'Editar Lançamento' : (txType === 'income' ? 'Nova Entrada' : 'Nova Saída')}
                             </Text>
-                            <TouchableOpacity onPress={() => setShowModal(false)} className="bg-slate-100 p-2 rounded-full">
-                                <X size={20} color="#64748B" />
-                            </TouchableOpacity>
+                            <View className="flex-row gap-2">
+                                {editId && (
+                                    <TouchableOpacity onPress={handleDelete} className="bg-red-100 p-2 rounded-full">
+                                        <Text className="text-red-600 font-bold text-[10px] px-2">EXCLUIR</Text>
+                                    </TouchableOpacity>
+                                )}
+                                <TouchableOpacity onPress={() => { setShowModal(false); setEditId(null); }} className="bg-slate-100 p-2 rounded-full">
+                                    <X size={20} color="#64748B" />
+                                </TouchableOpacity>
+                            </View>
                         </View>
 
                         <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Descrição</Text>
@@ -281,7 +383,9 @@ export default function FinanceScreen() {
                         />
 
                         <TouchableOpacity onPress={handleSave} className={`py-4 rounded-xl items-center ${txType === 'income' ? 'bg-emerald-600' : 'bg-red-500'}`}>
-                            <Text className="text-white font-black italic text-sm uppercase tracking-widest">Confirmar</Text>
+                            <Text className="text-white font-black italic text-sm uppercase tracking-widest">
+                                {editId ? 'Salvar Alterações' : 'Confirmar'}
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </View>

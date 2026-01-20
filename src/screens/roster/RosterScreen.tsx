@@ -137,7 +137,8 @@ export default function RosterScreen({ navigation }: any) {
                 }
             />
 
-            {canManageRoster && (
+            {/* FAB Removed - Moved to Main Speed Dial */}
+            {/* {canManageRoster && (
                 <TouchableOpacity
                     className="absolute bottom-6 right-6 w-14 h-14 bg-[#006400] rounded-2xl items-center justify-center shadow-lg shadow-green-900/40 transform rotate-45"
                     onPress={handleAddPlayer}
@@ -147,7 +148,7 @@ export default function RosterScreen({ navigation }: any) {
                         <Plus size={24} color="white" />
                     </View>
                 </TouchableOpacity>
-            )}
+            )} */}
         </View>
     );
 }

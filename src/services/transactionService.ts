@@ -12,7 +12,6 @@ import {
     getDocs,
     getDoc,
     setDoc,
-    orderBy,
     limit
 } from 'firebase/firestore';
 import { Transaction, Team, Player, Match } from '@/types/models';
@@ -31,6 +30,19 @@ export const TransactionService = {
             });
         } catch (error) {
             console.error("Error creating transaction:", error);
+            throw error;
+        }
+    },
+
+    /**
+     * Updates an existing transaction.
+     */
+    updateTransaction: async (teamId: string, transactionId: string, updates: Partial<Transaction>) => {
+        try {
+            const ref = doc(db, 'teams', teamId, 'transactions', transactionId);
+            await updateDoc(ref, updates);
+        } catch (error) {
+            console.error("Error updating transaction:", error);
             throw error;
         }
     },
