@@ -1,22 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { View, FlatList, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
+import { View, FlatList, ActivityIndicator, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { Player } from '@/types/models';
-import { Plus, User, Target, Activity, Star, Shield } from 'lucide-react-native';
+import { User, Target, Activity, Star, Shield, AlertTriangle } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { TransactionService } from '@/services/transactionService';
 
 export default function RosterScreen({ navigation }: any) {
     const teamId = useTeamStore(state => state.teamId);
-    const { canManageRoster } = usePermissions();
+    // const { canManageRoster } = usePermissions(); // Unused currently
 
+    const myPlayerProfile = useTeamStore(state => state.myPlayerProfile);
     const [players, setPlayers] = useState<Player[]>([]);
     const [loading, setLoading] = useState(true);
+    const [pendingMap, setPendingMap] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         if (!teamId) return;
@@ -37,7 +40,21 @@ export default function RosterScreen({ navigation }: any) {
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        // Subscribe to Pending Finance
+        const unsubFinance = TransactionService.subscribeToPendingTransactions(teamId, (txs) => {
+            const map: Record<string, boolean> = {};
+            txs.forEach(t => {
+                if (t.playerId && t.status === 'pending') {
+                    map[t.playerId] = true;
+                }
+            });
+            setPendingMap(map);
+        });
+
+        return () => {
+            unsubscribe();
+            unsubFinance();
+        }
     }, [teamId]);
 
     const handleAddPlayer = () => {
@@ -68,13 +85,31 @@ export default function RosterScreen({ navigation }: any) {
                     </View>
 
                     <View className="flex-1">
-                        <Text className="font-bold text-slate-800 text-lg" numberOfLines={1}>{item.name}</Text>
+                        <View className="flex-row items-center">
+                            <Text className="font-bold text-slate-800 text-lg" numberOfLines={1}>{item.name}</Text>
+                            {/* YOU Indicator */}
+                            {myPlayerProfile && item.id === myPlayerProfile.id && (
+                                <View className="bg-slate-200 px-2 py-0.5 rounded-full ml-2">
+                                    <Text className="text-[10px] font-bold text-slate-600 uppercase">Você</Text>
+                                </View>
+                            )}
+                        </View>
+
                         <View className="flex-row items-center gap-2 mt-1 flex-wrap">
                             <Badge
                                 label={getPositionAbbr(item.position)}
                                 color="bg-slate-100"
                                 textColor="text-slate-500"
                             />
+
+                            {/* Pending Finance Warning */}
+                            {pendingMap[item.id] && (
+                                <View className="flex-row items-center bg-red-50 px-2 py-1 rounded-md border border-red-100">
+                                    <AlertTriangle size={10} color="#EF4444" />
+                                    <Text className="ml-1 text-[10px] font-bold text-red-500">PENDÊNCIA</Text>
+                                </View>
+                            )}
+
                             {/* Mini Stats */}
                             <View className="flex-row items-center bg-slate-50 px-2 py-1 rounded-md">
                                 <Target size={10} color="#64748B" />

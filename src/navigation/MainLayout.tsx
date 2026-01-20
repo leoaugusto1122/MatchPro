@@ -67,11 +67,11 @@ export default function MainLayout({ onNavigate }: MainLayoutProps) {
 
     const renderContent = () => {
         switch (currentTab) {
-            case 'Dashboard': return <HomeScreen navigation={{ navigate: onNavigate }} />;
+            case 'Dashboard': return <HomeScreen navigation={{ navigate: onNavigate }} onTabChange={setCurrentTab} />;
             case 'Elenco': return <RosterScreen navigation={{ navigate: onNavigate }} />;
             case 'Partidas': return <MatchesScreen navigation={{ navigate: onNavigate }} />;
             case 'Financeiro': return <FinanceScreen route={{ params: financeParams }} />;
-            default: return <HomeScreen navigation={{ navigate: onNavigate }} />;
+            default: return <HomeScreen navigation={{ navigate: onNavigate }} onTabChange={setCurrentTab} />;
         }
     };
 

@@ -2,6 +2,7 @@ import { db } from './firebase';
 import { doc, runTransaction, collection, getDocs } from 'firebase/firestore';
 import { Match, MatchEvent, Player, PresenceStatus, PlayerMatchStats } from '@/types/models';
 import { BillingService } from './billingService';
+import { TransactionService } from './transactionService';
 
 export const StatsService = {
     /**
@@ -238,8 +239,10 @@ export const StatsService = {
             }
         });
 
+
         try {
-            await BillingService.generateGamePayments(teamId, matchId);
+            // Use TransactionService to generate debits in the main collection (Finance Dashboard)
+            await TransactionService.syncMatchTransactions(teamId, matchId);
         } catch (e) {
             console.error("Failed to generate payments:", e);
         }

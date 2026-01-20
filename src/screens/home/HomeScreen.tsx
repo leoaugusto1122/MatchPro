@@ -15,7 +15,7 @@ import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 
-export default function HomeScreen({ navigation }: any) {
+export default function HomeScreen({ navigation, onTabChange }: any) {
     const { teamId, teamName, clearTeamContext, currentRole } = useTeamStore();
     const { canManageTeam } = usePermissions();
 
@@ -36,24 +36,31 @@ export default function HomeScreen({ navigation }: any) {
         try {
             const now = new Date();
 
-            // 1. Next Match
+            // 1. Next Match - Fetch a few to filter out finished ones client-side
             const nextMatchQ = query(
                 collection(db, 'teams', teamId, 'matches'),
                 where('date', '>=', Timestamp.fromDate(now)),
                 orderBy('date', 'asc'),
-                limit(1)
+                limit(10)
             );
             const nextSnap = await getDocs(nextMatchQ);
-            if (!nextSnap.empty) {
-                const doc = nextSnap.docs[0];
-                const data = doc.data() as Match;
-                setNextMatch({ ...data, id: doc.id });
+            let foundMatch = null;
 
-                // Count confirmed
-                const count = data.presence
-                    ? Object.values(data.presence).filter(p => p.status === 'confirmed').length
-                    : 0;
-                setConfirmedCount(count);
+            if (!nextSnap.empty) {
+                // Find first that is NOT finished
+                const matches = nextSnap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Match));
+                foundMatch = matches.find(m => m.status !== 'finished') || null;
+
+                if (foundMatch) {
+                    setNextMatch(foundMatch);
+                    // Count confirmed
+                    const count = foundMatch.presence
+                        ? Object.values(foundMatch.presence).filter(p => p.status === 'confirmed').length
+                        : 0;
+                    setConfirmedCount(count);
+                } else {
+                    setNextMatch(null);
+                }
             } else {
                 setNextMatch(null);
             }
@@ -100,15 +107,6 @@ export default function HomeScreen({ navigation }: any) {
                 TransactionService.checkAndGenerateMonthlyTransactions(teamId).catch(console.error);
 
                 const summary = await TransactionService.getSummary(teamId);
-                // "Collected" = Income Paid. "Pending" = Pending (Income).
-                // Our getSummary returns { income (paid), expense (paid), pending (all pending) }
-                // Warning: getSummary might include paid expenses in 'income' if not careful? 
-                // TransactionService.getSummary impl: 
-                // if t.status === 'paid' { if type=income income+=; if type=expense expense+= }
-                // if t.status === 'pending' { pending+= }
-
-                // So collected = summary.income. 
-                // Pending = summary.pending.
                 setFinancials({
                     collected: summary.income,
                     pending: summary.pending,
@@ -186,11 +184,11 @@ export default function HomeScreen({ navigation }: any) {
                     <View className="mb-8">
                         <View className="flex-row justify-between items-end mb-4">
                             <Text className="text-xl font-black italic text-slate-900 tracking-tighter">FINANCEIRO</Text>
-                            <TouchableOpacity onPress={() => navigation.navigate('Financeiro')}>
+                            <TouchableOpacity onPress={() => onTabChange && onTabChange('Financeiro')}>
                                 <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Ver Detalhes</Text>
                             </TouchableOpacity>
                         </View>
-                        <Card className="bg-[#0F172A] p-0 overflow-hidden border-0" onTouchEnd={() => navigation.navigate('Financeiro')}>
+                        <Card className="bg-[#0F172A] p-0 overflow-hidden border-0" onTouchEnd={() => onTabChange && onTabChange('Financeiro')}>
                             {/* Background Pattern */}
                             <View className="absolute -right-6 -bottom-6 opacity-10">
                                 <TrendingUp size={150} color="white" />
@@ -237,7 +235,7 @@ export default function HomeScreen({ navigation }: any) {
                 <View className="mb-8">
                     <View className="flex-row justify-between items-end mb-4">
                         <Text className="text-xl font-black italic text-slate-900 tracking-tighter">PRÓXIMA PARTIDA</Text>
-                        <TouchableOpacity onPress={() => navigation.navigate('Partidas')}>
+                        <TouchableOpacity onPress={() => onTabChange && onTabChange('Partidas')}>
                             <Text className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Ver Agenda</Text>
                         </TouchableOpacity>
                     </View>

@@ -3,9 +3,9 @@ import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, ActivityInd
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
-import { doc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
-import { Match, MatchEvent, PresenceStatus, Transaction } from '@/types/models'; // Updated import
-import { TransactionService } from '@/services/transactionService'; // New Service
+import { doc, updateDoc, addDoc, collection, Timestamp, onSnapshot, query, orderBy, getDocs, deleteField } from 'firebase/firestore';
+import { Match, MatchEvent, PresenceStatus, Transaction, Player } from '@/types/models';
+import { TransactionService } from '@/services/transactionService';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -14,7 +14,7 @@ import {
     Calendar, MapPin, Trophy, Target,
     CheckCircle2, XCircle,
     Flag, RotateCcw, DollarSign,
-    ChevronLeft, Settings2, Users, X
+    ChevronLeft, Settings2, Users, X, Trash2
 } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
@@ -35,7 +35,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     const [loading, setLoading] = useState(false);
     const [match, setMatch] = useState<Match | null>(null);
     const [events, setEvents] = useState<MatchEvent[]>([]);
-    const [transactions, setTransactions] = useState<Transaction[]>([]); // Changed from payments
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
 
     const [opponent, setOpponent] = useState('');
     const [location, setLocation] = useState('');
@@ -98,81 +98,16 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         return map;
     }, [transactions]);
 
-    const handleSaveInfo = async () => {
-        if (!opponent || !teamId) return;
-        setLoading(true);
+    const myStatus = useMemo(() => {
+        if (!match?.presence || !myPlayerProfile) return null;
+        const p = match.presence[myPlayerProfile.id];
+        return p ? p.status : null;
+    }, [match, myPlayerProfile]);
 
-        try {
-            const matchData: any = {
-                opponent,
-                location,
-                date: Timestamp.fromDate(date),
-            };
-
-            if (mode === 'create') {
-                matchData.status = 'scheduled';
-                matchData.scoreHome = 0;
-                matchData.scoreAway = 0;
-                matchData.presence = {};
-                await addDoc(collection(db, 'teams', teamId, 'matches'), matchData);
-            } else {
-                await updateDoc(doc(db, 'teams', teamId, 'matches', matchId), matchData);
-            }
-            setIsEditing(false);
-            if (mode === 'create') navigation.goBack();
-        } catch (e) {
-            console.error(e);
-            Alert.alert('Erro', 'Falha ao salvar partida.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handlePresence = async (status: PresenceStatus) => {
-        if (!match || !teamId || !myPlayerProfile) {
-            Alert.alert('Aviso', 'Seu perfil de jogador não foi encontrado neste time.');
-            return;
-        }
-
-        // Rule: Only Athletes or Owner can mark presence
-        if (!myPlayerProfile.isAthlete && !isOwner) {
-            Alert.alert('Aviso', 'Apenas jogadores ativos participam da lista de presença.');
-            return;
-        }
-
-        if (match.status === 'finished' && !isOwner) {
-            Alert.alert('Bloqueado', 'Partida finalizada. Presença travada.');
-            return;
-        }
-
-        // Rule: Cannot change presence if match date has passed (and not owner)
-        if (match.date && !isOwner) {
-            const matchDate = (match.date as any).toDate ? (match.date as any).toDate() : new Date(match.date);
-            if (new Date() > matchDate) {
-                Alert.alert('Bloqueado', 'A data da partida já passou. Não é possível alterar a presença.');
-                return;
-            }
-        }
-
-        try {
-            const matchRef = doc(db, 'teams', teamId, 'matches', match.id);
-            await updateDoc(matchRef, {
-                [`presence.${myPlayerProfile.id}`]: {
-                    status,
-                    name: myPlayerProfile.name,
-                    timestamp: new Date()
-                }
-            });
-
-            // TRIGGER FINANCIAL UPDATE
-            if (status === 'confirmed') {
-                await TransactionService.syncMatchTransactions(teamId, match.id);
-            }
-
-        } catch (e) {
-            console.error(e);
-            Alert.alert('Erro', 'Falha ao confirmar presença.');
-        }
+    const getMyStatus = () => {
+        if (!match?.presence || !myPlayerProfile) return null;
+        const p = match.presence[myPlayerProfile.id];
+        return p ? p.status : null;
     };
 
     const canEditStats = useMemo(() => {
@@ -215,6 +150,33 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [match?.presence]);
 
+    // NEW: Undecided Players (Not voted yet)
+    const [teamPlayers, setTeamPlayers] = useState<Player[]>([]);
+
+    useEffect(() => {
+        if (!teamId) return;
+        const q = query(collection(db, 'teams', teamId, 'players'));
+        const unsubPlayers = onSnapshot(q, (snap) => {
+            const list: Player[] = [];
+            snap.forEach(d => {
+                const p = d.data() as Player;
+                if (p.status === 'active') { // Only active players
+                    list.push({ ...p, id: d.id });
+                }
+            });
+            setTeamPlayers(list);
+        });
+        return () => unsubPlayers();
+    }, [teamId]);
+
+    const undecidedPlayers = useMemo(() => {
+        if (!teamPlayers.length) return [];
+        const decidedIds = new Set(Object.keys(match?.presence || {}));
+        return teamPlayers
+            .filter(p => !decidedIds.has(p.id))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [teamPlayers, match?.presence]);
+
     const handleFinalizeMatch = async () => {
         if (!match || !teamId) return;
         Alert.alert(
@@ -254,17 +216,18 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         if (!match || !teamId) return;
         Alert.alert(
             'Reabrir Partida',
-            'ATENÇÃO: Ao reabrir, as estatísticas desta partida serão SUBTRAÍDAS dos jogadores. Tem certeza?',
+            'ATENÇÃO: Isso irá reverter todas as estatísticas e pagamentos gerados para esta partida. Deseja continuar?',
             [
                 { text: 'Cancelar', style: 'cancel' },
                 {
-                    text: 'Reabrir',
+                    text: 'Sim, Reabrir',
                     style: 'destructive',
                     onPress: async () => {
                         try {
                             setLoading(true);
+                            // 3rd arg is events
                             await StatsService.rollbackMatchStats(teamId, matchId, events);
-                            Alert.alert('Sucesso', 'Partida reaberta e estatísticas revertidas.');
+                            Alert.alert('Sucesso', 'Partida reaberta para edição.');
                         } catch (e) {
                             console.error(e);
                             Alert.alert('Erro', 'Falha ao reabrir partida.');
@@ -275,24 +238,61 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                 }
             ]
         );
-    }
+    };
 
-    const handlePaymentAction = async (playerId: string) => {
-        const transaction = paymentsMap[playerId];
-        if (!transaction || transaction.status === 'paid' || (!isOwner && currentRole !== 'coach')) return;
+    const handlePresence = async (status: PresenceStatus) => {
+        if (!match || !teamId || !myPlayerProfile) return;
+        try {
+            const matchRef = doc(db, 'teams', teamId, 'matches', match.id);
+            await updateDoc(matchRef, {
+                [`presence.${myPlayerProfile.id}`]: {
+                    status,
+                    name: myPlayerProfile.name,
+                    timestamp: new Date()
+                }
+            });
+        } catch (e) {
+            console.error(e);
+            Alert.alert('Erro', 'Falha ao atualizar presença.');
+        }
+    };
 
+    const handleAdminPresence = async (playerId: string, playerName: string, status: PresenceStatus) => {
+        if (!match || !teamId) return;
+        try {
+            const matchRef = doc(db, 'teams', teamId, 'matches', match.id);
+            await updateDoc(matchRef, {
+                [`presence.${playerId}`]: {
+                    status,
+                    name: playerName,
+                    timestamp: new Date()
+                }
+            });
+        } catch (e) {
+            console.error(e);
+            Alert.alert('Erro', 'Falha ao atualizar presença.');
+        }
+    };
+
+    const handleRemovePresence = async (playerId: string) => {
+        if (!match || !teamId) return;
         Alert.alert(
-            'Receber Pagamento',
-            `Confirmar recebimento de R$ ${transaction.amount}?`,
+            'Remover Confirmação',
+            'Deseja remover a presença deste jogador? Ele voltará para a lista de "Não Votaram".',
             [
                 { text: 'Cancelar', style: 'cancel' },
                 {
-                    text: 'Confirmar Recebimento',
+                    text: 'Remover',
+                    style: 'destructive',
                     onPress: async () => {
                         try {
-                            await TransactionService.markAsPaid(teamId!, transaction.id);
+                            const matchRef = doc(db, 'teams', teamId, 'matches', match.id);
+                            await updateDoc(matchRef, {
+                                [`presence.${playerId}`]: deleteField()
+                            });
                         } catch (e) {
-                            Alert.alert('Erro', 'Falha ao confirmar pagamento.');
+                            console.error(e);
+                            Alert.alert('Erro', 'Falha ao remover presença.');
                         }
                     }
                 }
@@ -300,39 +300,61 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
         );
     };
 
-    const getMyStatus = () => {
-        if (match?.presence && myPlayerProfile?.id) {
-            return match.presence[myPlayerProfile.id]?.status || 'out';
-        }
-        return 'out';
-    };
-
-    // Helper to find player name
-    const getPlayerName = (id: string) => {
-        const p = confirmedPlayers.find(cp => cp.id === id);
-        return p ? p.name : 'Desconhecido';
-    };
-
-    // New Function to view votes
     const handleViewVotes = async () => {
-        if (!teamId || !matchId) return;
+        if (!isAdmin || !teamId) {
+            Alert.alert('Acesso Negado', 'Apenas donos e staff podem ver os votos detalhados.');
+            return;
+        }
+
         setLoading(true);
         try {
+            // Fetch all votes for this match
             const votesRef = collection(db, 'teams', teamId, 'matches', matchId, 'votes');
             const snap = await getDocs(votesRef);
-            const list: any[] = [];
-            snap.forEach(d => list.push(d.data()));
-            setAllVotes(list);
+            const votesList: any[] = [];
+            snap.forEach(d => votesList.push(d.data()));
+            setAllVotes(votesList);
             setShowVotesModal(true);
         } catch (e) {
-            console.error(e);
-            Alert.alert("Erro", "Erro ao carregar votos.");
+            Alert.alert('Erro', 'Falha ao buscar votos.');
         } finally {
             setLoading(false);
         }
     };
 
-    if (loading) {
+    const isAdmin = isOwner || currentRole === 'staff';
+
+    const handlePaymentAction = (playerId: string) => {
+        const payment = paymentsMap[playerId];
+        if (!payment) return;
+
+        if (payment.status === 'paid') {
+            Alert.alert('Detalhes', `Pagamento realizado em ${format(new Date(), 'dd/MM')}`);
+        } else {
+            if (isAdmin) {
+                Alert.alert(
+                    'Receber Pagamento',
+                    `Confirmar pagamento de R$ ${payment.amount}?`,
+                    [
+                        { text: 'Cancelar', style: 'cancel' },
+                        {
+                            text: 'Confirmar', onPress: async () => {
+                                if (!teamId) return;
+                                try {
+                                    await TransactionService.markAsPaid(teamId, payment.id);
+                                    Alert.alert('Sucesso', 'Pagamento registrado!');
+                                } catch (e) {
+                                    Alert.alert('Erro', 'Falha ao registrar pagamento.');
+                                }
+                            }
+                        }
+                    ]
+                );
+            }
+        }
+    };
+
+    if (loading && !match) {
         return (
             <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
                 <ActivityIndicator size="large" color="#006400" />
@@ -341,231 +363,113 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
     }
 
     return (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 bg-[#F8FAFC]">
-            {/* Modal for Votes */}
-            <Modal visible={showVotesModal} animationType="slide" transparent={true}>
-                <View className="flex-1 bg-black/50 justify-end">
-                    <View className="bg-white rounded-t-3xl h-[80%] p-6">
-                        <View className="flex-row justify-between items-center mb-6">
-                            <Text className="text-lg font-black italic text-slate-900 uppercase">VOTAÇÃO DETALHADA</Text>
-                            <TouchableOpacity onPress={() => setShowVotesModal(false)} className="p-2 bg-slate-100 rounded-full">
-                                <X size={20} color="#64748B" />
-                            </TouchableOpacity>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1 bg-[#F8FAFC]">
+            <View className="pt-12 px-6 pb-4 bg-white border-b border-slate-100">
+                <View className="flex-row items-center justify-between">
+                    <TouchableOpacity onPress={() => navigation.goBack()} className="w-10 h-10 bg-slate-50 items-center justify-center rounded-full">
+                        <ChevronLeft size={24} color="#0F172A" />
+                    </TouchableOpacity>
+                    <Text className="text-xl font-black italic text-slate-900 uppercase">DETALHES DA PARTIDA</Text>
+                    <View className="w-10" />
+                </View>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 100 }}>
+                {/* Match Header Info */}
+                <View className="mb-8">
+                    <View className="flex-row justify-between items-start mb-2">
+                        <View>
+                            <Text className="text-3xl font-black italic text-slate-900 uppercase">
+                                {match?.opponent || 'JOGO INTERNO'}
+                            </Text>
+                            <View className="flex-row items-center mt-2">
+                                <Calendar size={14} color="#64748B" />
+                                <Text className="ml-2 text-slate-500 font-bold text-xs uppercase">
+                                    {match?.date ? format(date, "EEE, dd 'de' MMMM • HH:mm", { locale: ptBR }) : 'DATA A DEFINIR'}
+                                </Text>
+                            </View>
+                            <View className="flex-row items-center mt-1">
+                                <MapPin size={14} color="#64748B" />
+                                <Text className="ml-2 text-slate-500 font-bold text-xs uppercase">{match?.location || 'LOCAL A DEFINIR'}</Text>
+                            </View>
                         </View>
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            {allVotes.length === 0 ? (
-                                <Text className="text-slate-400 italic text-center mt-10">Nenhum voto registrado.</Text>
-                            ) : (
-                                allVotes.map((v, index) => {
-                                    // v.playerId is the player ID who voted.
-                                    const voterName = getPlayerName(v.playerId);
-
-                                    return (
-                                        <View key={index} className="mb-6 border-b border-slate-100 pb-4">
-                                            <Text className="font-bold text-slate-800 mb-2">👤 {voterName} votou:</Text>
-
-                                            {/* Ratings */}
-                                            {v.ratings && Object.entries(v.ratings).map(([targetId, rating]) => (
-                                                <Text key={targetId} className="text-xs text-slate-600 ml-4 mb-1">
-                                                    • {getPlayerName(targetId as string)}: <Text className="font-bold text-blue-600">{Number(rating).toFixed(1)}</Text>
-                                                </Text>
-                                            ))}
-
-                                            {/* Best Player Vote */}
-                                            {v.bestPlayerVote && (
-                                                <Text className="text-xs text-[#006400] font-bold ml-4 mt-1">
-                                                    🏆 Craque: {getPlayerName(v.bestPlayerVote)}
-                                                </Text>
-                                            )}
-                                        </View>
-                                    );
-                                })
-                            )}
-                        </ScrollView>
+                        <Badge
+                            label={match?.status === 'finished' ? 'FINALIZADO' : (match?.status === 'scheduled' ? 'AGENDADO' : 'RASCUNHO')}
+                            color={match?.status === 'finished' ? '#dcfce7' : (match?.status === 'scheduled' ? '#fef9c3' : '#f1f5f9')}
+                            textColor={match?.status === 'finished' ? '#166534' : (match?.status === 'scheduled' ? '#854d0e' : '#475569')}
+                        />
                     </View>
                 </View>
-            </Modal>
 
-            <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-
-                {/* Header Section */}
-                <View className="pt-12 px-6 pb-6 bg-white border-b border-slate-100 mb-6 shadow-sm">
-                    <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center mb-6">
-                        <ChevronLeft size={20} color="#94A3B8" />
-                        <Text className="ml-1 font-black italic text-slate-400 uppercase tracking-widest text-[10px]">Agenda</Text>
-                    </TouchableOpacity>
-
-                    {isEditing ? (
-                        <View className="gap-4">
-                            <Header title="EDITAR JOGO" subtitle="Detalhes da Partida" />
-                            <View>
-                                <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">ADVERSÁRIO</Text>
-                                <TextInput
-                                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 font-bold"
-                                    value={opponent} onChangeText={setOpponent} placeholder="Nome do Adversário"
-                                />
-                            </View>
-                            <View>
-                                <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1 ml-1">LOCAL</Text>
-                                <TextInput
-                                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 font-bold"
-                                    value={location} onChangeText={setLocation} placeholder="Estádio / Arena"
-                                />
-                            </View>
-                            <View className="flex-row items-center justify-between py-2 border-y border-dashed border-slate-100">
-                                <View className="flex-row items-center">
-                                    <Calendar size={18} color="#94A3B8" />
-                                    <Text className="ml-2 font-bold text-slate-600">{format(date, "dd/MM/yyyy HH:mm")}</Text>
-                                </View>
-                                <TouchableOpacity
-                                    onPress={() => {
-                                        setDatePickerMode('date');
-                                        setShowDatePicker(true);
-                                    }}
-                                    className="bg-slate-900 px-4 py-2 rounded-lg"
-                                >
-                                    <Text className="text-white font-black italic uppercase text-[10px] tracking-widest">ALTERAR</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <View className="flex-row gap-4 mt-2">
-                                <TouchableOpacity onPress={() => setIsEditing(false)} className="flex-1 py-4 items-center">
-                                    <Text className="text-slate-400 font-black italic uppercase text-xs tracking-widest">CANCELAR</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={handleSaveInfo} className="flex-2 bg-[#006400] px-6 py-4 rounded-2xl items-center shadow-lg shadow-green-900/20">
-                                    <Text className="text-white font-black italic uppercase text-xs tracking-widest">SALVAR JOGO</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    ) : (
-                        <View>
-                            <View className="flex-row justify-between items-center mb-6">
-                                <Badge
-                                    label={match?.status === 'finished' ? 'FINALIZADA' : 'AGENDADA'}
-                                    color={match?.status === 'finished' ? 'bg-slate-900' : 'bg-emerald-100'}
-                                    textColor={match?.status === 'finished' ? 'text-white' : 'text-emerald-700'}
-                                />
-                                {canManageMatches && (match?.status !== 'finished' || isOwner) && (
-                                    <TouchableOpacity onPress={() => setIsEditing(true)}>
-                                        <Settings2 size={20} color="#94A3B8" />
-                                    </TouchableOpacity>
-                                )}
-                            </View>
-
-                            {/* Scoreboard - Read Only */}
-                            <View className="flex-row justify-between items-center px-4 mb-4">
-                                <View className="items-center flex-1">
-                                    <View className="w-16 h-16 bg-slate-900 rounded-3xl items-center justify-center mb-2">
-                                        <Trophy size={32} color="white" />
-                                    </View>
-                                    <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest">MEU TIME</Text>
-                                </View>
-
-                                <View className="flex-row items-center gap-4">
-                                    <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreHome || 0}</Text>
-                                    <Text className="text-slate-300 font-black italic text-2xl">X</Text>
-                                    <Text className="text-5xl font-black italic text-slate-900 tracking-tighter">{match?.scoreAway || 0}</Text>
-                                </View>
-
-                                <View className="items-center flex-1">
-                                    <View className="w-16 h-16 bg-slate-100 rounded-3xl items-center justify-center mb-2">
-                                        <Trophy size={32} color="#CBD5E1" />
-                                    </View>
-                                    <Text className="text-[10px] font-black uppercase text-slate-400 tracking-widest" numberOfLines={1}>{match?.opponent || 'ADV'}</Text>
-                                </View>
-                            </View>
-
-                            <View className="items-center mt-6">
-                                <View className="flex-row items-center mb-1">
-                                    <Calendar size={12} color="#64748B" />
-                                    <Text className="ml-1 text-xs font-black italic uppercase text-slate-500 tracking-widest">
-                                        {match?.date && (() => {
-                                            try {
-                                                const d = (match.date as any).toDate ? (match.date as any).toDate() : new Date(match.date);
-                                                return format(d, "EEEE, d 'DE' MMMM", { locale: ptBR });
-                                            } catch (e) { return ''; }
-                                        })()}
-                                    </Text>
-                                </View>
-                                <View className="flex-row items-center">
-                                    <MapPin size={12} color="#94A3B8" />
-                                    <Text className="ml-1 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">{match?.location}</Text>
-                                </View>
-                            </View>
-                        </View>
-                    )}
-                </View>
-
-                {/* Match Center / Presence */}
-                <View className="px-6">
-
-                    {/* AWARDS SECTION (NEW) */}
-                    {match?.status === 'finished' && match.awards && (
-                        <View className="mb-8 flex-row gap-4">
-                            {/* Best Player */}
-                            <View className="flex-1 bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-2xl border border-orange-100 items-center shadow-sm">
-                                <Text className="text-[8px] font-black uppercase text-orange-400 tracking-widest mb-2">MELHOR DA PARTIDA</Text>
-                                <View className="w-12 h-12 bg-orange-400 rounded-full items-center justify-center mb-2 shadow-sm">
-                                    <Trophy size={20} color="white" />
-                                </View>
-                                <Text className="font-black italic text-slate-800 text-center text-sm" numberOfLines={1}>
-                                    {match.awards.bestPlayerId ? getPlayerName(match.awards.bestPlayerId) : '-'}
-                                </Text>
-                                <Text className="text-[10px] text-orange-400 font-bold mt-1">Nota: {match.awards.bestPlayerScore?.toFixed(1) || '-'}</Text>
-                            </View>
-
-                            {/* Crowd Favorite */}
-                            <View className="flex-1 bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-2xl border border-emerald-100 items-center shadow-sm">
-                                <Text className="text-[8px] font-black uppercase text-emerald-500 tracking-widest mb-2">CRAQUE DA GALERA</Text>
-                                <View className="w-12 h-12 bg-emerald-500 rounded-full items-center justify-center mb-2 shadow-sm">
-                                    <Users size={20} color="white" />
-                                </View>
-                                <Text className="font-black italic text-slate-800 text-center text-sm" numberOfLines={1}>
-                                    {match.awards.crowdFavoriteId ? getPlayerName(match.awards.crowdFavoriteId) : '-'}
-                                </Text>
-                                <Text className="text-[10px] text-emerald-500 font-bold mt-1">
-                                    {match.awards.crowdFavoriteVotes || 0} Votos
-                                </Text>
-                            </View>
-                        </View>
-                    )}
-
+                {/* Main Content */}
+                <View>
                     {/* Attendance Selector - Show if match open OR if owner */}
-                    {(match?.status !== 'finished' || isOwner) && (myPlayerProfile?.isAthlete || isOwner) ? (
-                        <View className="mb-8">
-                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">SUA PRESENÇA</Text>
-                            <View className="flex-row bg-white p-1 rounded-2xl border border-slate-100 shadow-sm">
-                                <TouchableOpacity
-                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'confirmed' ? 'bg-[#006400]' : 'bg-transparent'}`}
-                                    onPress={() => handlePresence('confirmed')}
-                                >
-                                    <CheckCircle2 size={16} color={getMyStatus() === 'confirmed' ? 'white' : '#94A3B8'} />
-                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'confirmed' ? 'text-white' : 'text-slate-400'}`}>Vou</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'out' ? 'bg-red-500' : 'bg-transparent'}`}
-                                    onPress={() => handlePresence('out')}
-                                >
-                                    <XCircle size={16} color={getMyStatus() === 'out' ? 'white' : '#94A3B8'} />
-                                    <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'out' ? 'text-white' : 'text-slate-400'}`}>Não</Text>
-                                </TouchableOpacity>
+                    {/* UPDATED LOGIC: If match finished or date passed, disable for EVERYONE (including owner, unless they reopen/edit date) */}
+                    {(() => {
+                        const isFinished = match?.status === 'finished';
+                        // Check date
+                        let isPast = false;
+                        if (match?.date) {
+                            const d = (match.date as any).toDate ? (match.date as any).toDate() : new Date(match.date);
+                            if (new Date() > d) isPast = true;
+                        }
+
+                        // Strict Rule: If Finished, Closed for everyone.
+                        // If Past: Closed for Players, Open for Owner (to allow correction after reopen)
+                        const isVotingClosed = isFinished || (isPast && !isOwner);
+
+                        if (isVotingClosed) {
+                            return (
+                                <View className="mb-8">
+                                    <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">SUA PRESENÇA</Text>
+                                    <View className="bg-slate-100 p-4 rounded-2xl border border-slate-200 items-center justify-center">
+                                        <Text className="text-slate-400 font-bold text-xs uppercase text-center">
+                                            {isFinished ? 'PARTIDA FINALIZADA' : 'DATA LIMITE EXPIRADA'}
+                                        </Text>
+                                        <Text className="text-slate-400 text-[10px] text-center mt-1">
+                                            Não é mais possível alterar a presença.
+                                        </Text>
+                                    </View>
+                                </View>
+                            );
+                        }
+
+                        // Regular Voting
+                        return (myPlayerProfile?.isAthlete || isOwner) ? (
+                            <View className="mb-8">
+                                <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">SUA PRESENÇA</Text>
+                                <View className="flex-row bg-white p-1 rounded-2xl border border-slate-100 shadow-sm">
+                                    <TouchableOpacity
+                                        className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'confirmed' ? 'bg-[#006400]' : 'bg-transparent'}`}
+                                        onPress={() => handlePresence('confirmed')}
+                                    >
+                                        <CheckCircle2 size={16} color={getMyStatus() === 'confirmed' ? 'white' : '#94A3B8'} />
+                                        <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'confirmed' ? 'text-white' : 'text-slate-400'}`}>Vou</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        className={`flex-1 py-4 flex-row justify-center items-center rounded-xl ${getMyStatus() === 'out' ? 'bg-red-500' : 'bg-transparent'}`}
+                                        onPress={() => handlePresence('out')}
+                                    >
+                                        <XCircle size={16} color={getMyStatus() === 'out' ? 'white' : '#94A3B8'} />
+                                        <Text className={`ml-2 font-black italic text-[10px] uppercase tracking-widest ${getMyStatus() === 'out' ? 'text-white' : 'text-slate-400'}`}>Não</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                        </View>
-                    ) : null}
+                        ) : null;
+                    })()}
 
-
-                    {/* Voting Action - Players */}
-                    {match?.status === 'finished' && (
+                    {/* Voting Logic - Only show if finished or I voted 'confirmed' */}
+                    {isOwner && match?.status === 'finished' && (
                         (() => {
-                            const myPresence = match.presence?.[myPlayerProfile?.id || ''];
-                            const myStats = match.stats?.[myPlayerProfile?.id || ''];
-                            const isEligible = myPresence?.status === 'confirmed' && !myStats?.faltou;
-
-                            if (isEligible) {
+                            // Check if voting is open (e.g. within 24h after match)
+                            // For now, always open if finished
+                            const canVote = true; // Placeholder
+                            if (canVote) {
                                 return (
-                                    <View className="mb-6">
+                                    <View className="mb-8">
+                                        <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase mb-4 ml-1">PÓS-JOGO</Text>
                                         <TouchableOpacity
-                                            onPress={() => navigation.navigate('MatchVoting', { matchId: match.id })}
+                                            onPress={() => navigation.navigate('PostMatchVoting', { matchId })}
                                             className="bg-purple-600 p-4 rounded-2xl flex-row justify-center items-center shadow-lg shadow-purple-200"
                                         >
                                             <Trophy size={20} color="white" />
@@ -652,14 +556,26 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                                                     </View>
                                                 </View>
 
-                                                {payment && (
-                                                    <TouchableOpacity onPress={() => handlePaymentAction(p.id)} className={`px-2 py-1 rounded-lg flex-row items-center ${payment.status === 'paid' ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                                                        <DollarSign size={10} color={payment.status === 'paid' ? '#10B981' : '#EF4444'} />
-                                                        <Text className={`ml-1 text-[8px] font-black uppercase tracking-widest ${payment.status === 'paid' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                                            {payment.status === 'paid' ? 'PAGO' : 'PENDENTE'}
-                                                        </Text>
-                                                    </TouchableOpacity>
-                                                )}
+                                                <View className="flex-row items-center gap-2">
+                                                    {payment && (
+                                                        <TouchableOpacity onPress={() => handlePaymentAction(p.id)} className={`px-2 py-1 rounded-lg flex-row items-center ${payment.status === 'paid' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                                                            <DollarSign size={10} color={payment.status === 'paid' ? '#10B981' : '#EF4444'} />
+                                                            <Text className={`ml-1 text-[8px] font-black uppercase tracking-widest ${payment.status === 'paid' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                                {payment.status === 'paid' ? 'PAGO' : 'PENDENTE'}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    )}
+
+                                                    {/* Admin Reset Presence */}
+                                                    {(canManageMatches || isOwner) && match?.status !== 'finished' && (
+                                                        <TouchableOpacity
+                                                            onPress={() => handleRemovePresence(p.id)}
+                                                            className="w-8 h-8 items-center justify-center"
+                                                        >
+                                                            <Trash2 size={14} color="#CBD5E1" />
+                                                        </TouchableOpacity>
+                                                    )}
+                                                </View>
                                             </View>
                                         </Card>
                                     );
@@ -673,7 +589,7 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                         )}
                     </View>
 
-                    {/* Absent Players */}
+
                     {absentPlayers.length > 0 && (
                         <View className="mb-8 opacity-75">
                             <View className="flex-row justify-between items-end mb-4">
@@ -682,9 +598,61 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
 
                             <View className="gap-2">
                                 {absentPlayers.map((p) => (
-                                    <View key={p.id} className="p-3 bg-slate-50 rounded-xl flex-row items-center border border-slate-100">
-                                        <XCircle size={14} color="#94A3B8" />
-                                        <Text className="ml-2 font-bold text-slate-500 text-xs">{p.name}</Text>
+                                    <View key={p.id} className="p-3 bg-slate-50 rounded-xl flex-row items-center justify-between border border-slate-100">
+                                        <View className="flex-row items-center">
+                                            <XCircle size={14} color="#94A3B8" />
+                                            <Text className="ml-2 font-bold text-slate-500 text-xs">{p.name}</Text>
+                                        </View>
+
+                                        {/* Admin Reset Presence */}
+                                        {(canManageMatches || isOwner) && match?.status !== 'finished' && (
+                                            <TouchableOpacity
+                                                onPress={() => handleRemovePresence(p.id)}
+                                                className="w-6 h-6 items-center justify-center"
+                                            >
+                                                <Trash2 size={12} color="#CBD5E1" />
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* NEW: Undecided Players View */}
+                    {undecidedPlayers.length > 0 && (
+                        <View className="mb-8 opacity-60">
+                            <View className="flex-row justify-between items-end mb-4">
+                                <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{undecidedPlayers.length} AINDA NÃO VOTARAM</Text>
+                            </View>
+
+                            <View className="gap-2">
+                                {undecidedPlayers.map((p) => (
+                                    <View key={p.id} className="p-3 bg-slate-50 rounded-xl flex-row items-center justify-between border border-slate-100 border-dashed">
+                                        <View className="flex-row items-center">
+                                            <View className="w-4 h-4 rounded-full bg-slate-200 items-center justify-center">
+                                                <Text className="text-[8px] font-bold text-slate-500">?</Text>
+                                            </View>
+                                            <Text className="ml-2 font-bold text-slate-400 text-xs">{p.name}</Text>
+                                        </View>
+
+                                        {/* Admin Actions */}
+                                        {(canManageMatches || isOwner) && (match?.status !== 'finished') && (
+                                            <View className="flex-row gap-2">
+                                                <TouchableOpacity
+                                                    onPress={() => handleAdminPresence(p.id, p.name, 'confirmed')}
+                                                    className="w-6 h-6 bg-emerald-100 rounded-full items-center justify-center"
+                                                >
+                                                    <CheckCircle2 size={12} color="#059669" />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    onPress={() => handleAdminPresence(p.id, p.name, 'out')}
+                                                    className="w-6 h-6 bg-red-100 rounded-full items-center justify-center"
+                                                >
+                                                    <XCircle size={12} color="#DC2626" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        )}
                                     </View>
                                 ))}
                             </View>
@@ -735,7 +703,48 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                         />
                     )
                 }
-            </ScrollView >
-        </KeyboardAvoidingView >
+
+                {/* Votes Modal */}
+                <Modal visible={showVotesModal} animationType="slide" presentationStyle="pageSheet">
+                    <View className="flex-1 bg-white p-6">
+                        <View className="flex-row justify-between items-center mb-6">
+                            <Text className="text-xl font-black italic text-slate-900 uppercase">VOTOS DA PARTIDA</Text>
+                            <TouchableOpacity onPress={() => setShowVotesModal(false)} className="bg-slate-100 p-2 rounded-full">
+                                <X size={24} color="#64748B" />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView>
+                            {allVotes.length === 0 ? (
+                                <Text className="text-center text-slate-400 italic mt-10">Nenhum voto registrado.</Text>
+                            ) : (
+                                allVotes.map((v, index) => (
+                                    <View key={index} className="mb-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                        <Text className="font-bold text-slate-800 text-xs uppercase mb-2">Votante: {v.voterName || 'Anônimo'}</Text>
+                                        <View className="gap-1">
+                                            <Text className="text-[10px] text-slate-500">Melhor em Campo: <Text className="font-bold text-slate-700">{v.bestPlayerId || 'N/A'}</Text></Text>
+                                            <Text className="text-[10px] text-slate-500">Bagre: <Text className="font-bold text-slate-700">{v.worstPlayerId || 'N/A'}</Text></Text>
+                                        </View>
+                                        {/* Ratings */}
+                                        {v.ratings && Object.keys(v.ratings).length > 0 && (
+                                            <View className="mt-2 pt-2 border-t border-slate-200">
+                                                <Text className="text-[10px] font-black uppercase text-slate-400 mb-1">NOTAS</Text>
+                                                <View className="flex-row flex-wrap gap-2">
+                                                    {Object.entries(v.ratings).map(([pid, rate]) => (
+                                                        <View key={pid} className="bg-white px-2 py-1 rounded border border-slate-100">
+                                                            <Text className="text-[8px] font-bold text-slate-600">{pid.substring(0, 4)}... : {String(rate)}</Text>
+                                                        </View>
+                                                    ))}
+                                                </View>
+                                            </View>
+                                        )}
+                                    </View>
+                                ))
+                            )}
+                        </ScrollView>
+                    </View>
+                </Modal>
+
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }

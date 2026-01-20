@@ -4,7 +4,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { Transaction, Player } from '@/types/models';
 import { TransactionService } from '@/services/transactionService';
 import { format, isSameDay, subDays, startOfMonth, isAfter } from 'date-fns';
-import { TrendingUp, TrendingDown, Wallet, AlertTriangle, X } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, Wallet, AlertTriangle, X, CheckCircle } from 'lucide-react-native';
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
 import { db } from '@/services/firebase';
@@ -158,6 +158,29 @@ export default function FinanceScreen({ route }: any) {
                 }
             }
         ]);
+    };
+
+    // New Function to Receive Payment
+    const handleReceivePayment = async (t: Transaction) => {
+        if (!teamId) return;
+        Alert.alert(
+            'Receber Pagamento',
+            `Confirmar o recebimento de R$ ${t.amount.toFixed(2)} referente a " ${t.description} "?`,
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Confirmar Recebimento',
+                    onPress: async () => {
+                        try {
+                            await TransactionService.markAsPaid(teamId, t.id);
+                            Alert.alert("Sucesso", "Pagamento recebido!");
+                        } catch (e) {
+                            Alert.alert("Erro", "Falha ao receber pagamento.");
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const handleSave = async () => {
@@ -320,11 +343,28 @@ export default function FinanceScreen({ route }: any) {
                                             {t.date && t.date.seconds ? format(new Date(t.date.seconds * 1000), 'dd/MM') : 'Hoje'} • <Text className={t.status === 'pending' ? 'text-amber-500' : 'text-slate-500'}>{t.status === 'pending' ? 'PENDENTE' : 'PAGO'}</Text>
                                         </Text>
                                     </View>
-                                    <View>
+                                    <View className="items-end">
                                         <Text className={`font-black italic text-sm text-right ${t.type === 'income' ? 'text-emerald-600' : 'text-red-500'}`}>
                                             {t.type === 'income' ? '+' : '-'} R$ {Number(t.amount).toFixed(2)}
                                         </Text>
-                                        {isAdmin && <Text className="text-[8px] text-slate-300 font-bold text-right uppercase mt-1">Editar</Text>}
+
+                                        {/* Action Buttons Row */}
+                                        <View className="flex-row items-center mt-2 gap-2">
+                                            {isAdmin && t.status === 'pending' && t.type === 'income' && (
+                                                <TouchableOpacity
+                                                    onPress={(e) => {
+                                                        e.stopPropagation();
+                                                        handleReceivePayment(t);
+                                                    }}
+                                                    className="bg-emerald-100 flex-row items-center px-2 py-1 rounded-full"
+                                                >
+                                                    <CheckCircle size={10} color="#059669" />
+                                                    <Text className="text-[8px] font-bold text-emerald-700 ml-1 uppercase">RECEBER</Text>
+                                                </TouchableOpacity>
+                                            )}
+
+                                            {isAdmin && <Text className="text-[8px] text-slate-300 font-bold uppercase">Editar</Text>}
+                                        </View>
                                     </View>
                                 </Card>
                             </TouchableOpacity>
@@ -332,18 +372,6 @@ export default function FinanceScreen({ route }: any) {
                     )}
                 </View>
             </ScrollView>
-
-            {/* Quick Actions (Admin Only) - Moved to Main FAB */}
-            {/* {isAdmin && (
-                <View className="absolute bottom-6 right-6 flex-row gap-3">
-                    <TouchableOpacity onPress={() => { setTxType('expense'); setShowModal(true); }} className="bg-red-500 w-14 h-14 rounded-full items-center justify-center shadow-lg shadow-red-500/40">
-                        <TrendingDown size={24} color="white" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => { setTxType('income'); setShowModal(true); }} className="bg-emerald-600 w-14 h-14 rounded-full items-center justify-center shadow-lg shadow-emerald-500/40">
-                        <Plus size={24} color="white" />
-                    </TouchableOpacity>
-                </View>
-            )} */}
 
             {/* Modal */}
             <Modal visible={showModal} animationType="slide" transparent>
