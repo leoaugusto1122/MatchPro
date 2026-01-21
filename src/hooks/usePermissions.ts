@@ -1,18 +1,24 @@
 import { useTeamStore } from '@/stores/teamStore';
 
 export function usePermissions() {
-    const role = useTeamStore(state => state.currentRole);
+    const { currentRole: role, myPlayerProfile } = useTeamStore(state => state);
 
-    const isOwner = role === 'owner';
-    const isCoach = role === 'coach' || isOwner;
-    const isStaff = role === 'staff' || isCoach;
+    // Permission Logic:
+    // Owner: Determined by 'role' string (highest privilege)
+    // Staff: Determined by 'isStaff' flag OR 'owner' role
+    // Player: Determined by 'isAthlete' flag
+
+    const isOwner = role === 'owner'; // Only true owner has this role string
+    const isStaff = isOwner || myPlayerProfile?.isStaff === true;
 
     return {
         role,
+        isOwner,
+        isStaff,
         canManageTeam: isOwner,
-        canManageRoster: isCoach,
-        canManageMatches: isCoach,
-        canEditMatchResults: isCoach, // or staff?
-        canViewFinancials: isOwner, // strict
+        canManageRoster: isStaff,
+        canManageMatches: isStaff,
+        canEditMatchResults: isStaff,
+        canViewFinancials: isOwner, // Strict Owner only
     };
 }

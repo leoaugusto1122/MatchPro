@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, ScrollView, Alert, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { db } from '@/services/firebase';
-import { doc, getDoc, collection, query, where, getDocs, Timestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, Timestamp, setDoc } from 'firebase/firestore';
 import { Match, Player } from '@/types/models';
 import { ChevronLeft, Send } from 'lucide-react-native';
 
@@ -46,6 +46,12 @@ export default function MatchVotingScreen({ route, navigation }: any) {
 
             if (myPresence?.status !== 'confirmed') {
                 Alert.alert("Acesso Negado", "Apenas jogadores confirmados podem votar.");
+                navigation.goBack();
+                return;
+            }
+            // Ensure it is an Athlete voting
+            if (!myPlayerProfile.isAthlete) {
+                Alert.alert("Acesso Negado", "Apenas jogadores podem votar.");
                 navigation.goBack();
                 return;
             }

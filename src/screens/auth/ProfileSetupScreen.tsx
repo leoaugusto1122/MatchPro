@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity } from 'react-native';
 import { updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
-import { auth, db, firebaseConfig } from '@/services/firebase';
+import { db, firebaseConfig } from '@/services/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { User } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
-export default function ProfileSetupScreen({ navigation }: any) {
+export default function ProfileSetupScreen() {
     const { authUser, setUserData } = useAuthStore();
     const [name, setName] = useState(authUser?.displayName || '');
     const [nickname, setNickname] = useState('');

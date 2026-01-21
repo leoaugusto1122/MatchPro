@@ -179,8 +179,7 @@ export const BillingService = {
                 const userId = playerData.userId;
 
                 if (userId) {
-                    const memberRole = teamData.members?.[userId];
-                    if (memberRole === 'coach' || memberRole === 'staff' || memberRole === 'owner') {
+                    if (playerData.isAthlete === false) {
                         continue;
                     }
                 }

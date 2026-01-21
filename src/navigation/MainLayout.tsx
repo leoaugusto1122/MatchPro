@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, TouchableOpacity, Text, Animated, StyleSheet } from 'react-native';
 import { Home, Users, Trophy, Wallet, Plus, UserPlus, TrendingUp, TrendingDown } from 'lucide-react-native';
-import { useTeamStore } from '@/stores/teamStore'; // Import Store
+
+import { usePermissions } from '@/hooks/usePermissions';
 
 // Screens
 import HomeScreen from '@/screens/home/HomeScreen';
@@ -14,17 +15,18 @@ interface MainLayoutProps {
 }
 
 export default function MainLayout({ onNavigate }: MainLayoutProps) {
-    const { currentRole } = useTeamStore(state => state);
-    const isAdmin = currentRole === 'owner' || currentRole === 'staff'; // Check Permissions
+    const { role, canManageMatches, canManageRoster, canViewFinancials } = usePermissions();
+
+    // Determine if user has any management capability to show the FAB.
+    // We include 'staff' explicitly because they might have managing roles defined outside the strict boolean flags (or for future expansion).
+    const hasAnyPermission = canManageMatches || canManageRoster || canViewFinancials || role === 'staff';
 
     const [currentTab, setCurrentTab] = useState<'Dashboard' | 'Elenco' | 'Partidas' | 'Financeiro'>('Dashboard');
     const [financeParams, setFinanceParams] = useState<any>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const animation = useRef(new Animated.Value(0)).current;
 
-    // Reset finance params when leaving tab or after use (handled by FinanceScreen reset loop maybe? 
-    // Actually, FinanceScreen resets its internal state, but prop params persist. 
-    // Let's clear them when switching away from Financeiro.
+    // Reset finance params when leaving tab or after use
     useEffect(() => {
         if (currentTab !== 'Financeiro') {
             setFinanceParams(null);
@@ -93,52 +95,60 @@ export default function MainLayout({ onNavigate }: MainLayoutProps) {
 
             {/* Tab Bar Container */}
             <View className="absolute bottom-8 left-6 right-6 z-50">
-                {/* Speed Dial Buttons - ONLY FOR ADMIN */}
-                {isAdmin && (
+                {/* Speed Dial Buttons - ONLY IF PERMISSIONS ALLOW */}
+                {hasAnyPermission && (
                     <View
                         className="absolute bottom-10 left-0 right-0 items-center justify-center"
                         pointerEvents={isMenuOpen ? 'box-none' : 'none'}
                     >
 
-                        {/* 1. Nova Saída */}
-                        <Animated.View style={{ opacity, transform: [{ translateY: expenseTransY }, { translateX: expenseTransX }], position: 'absolute', zIndex: 60 }}>
-                            <TouchableOpacity onPress={() => goToFinance('new_expense')} className="items-center">
-                                <View className="w-12 h-12 bg-red-500 rounded-full items-center justify-center shadow-lg border border-white mb-1">
-                                    <TrendingDown size={20} color="white" />
-                                </View>
-                                <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">SAÍDA</Text>
-                            </TouchableOpacity>
-                        </Animated.View>
+                        {/* 1. Nova Saída - Finance Only */}
+                        {(canViewFinancials || role === 'staff') && (
+                            <Animated.View style={{ opacity, transform: [{ translateY: expenseTransY }, { translateX: expenseTransX }], position: 'absolute', zIndex: 60 }}>
+                                <TouchableOpacity onPress={() => goToFinance('new_expense')} className="items-center">
+                                    <View className="w-12 h-12 bg-red-500 rounded-full items-center justify-center shadow-lg border border-white mb-1">
+                                        <TrendingDown size={20} color="white" />
+                                    </View>
+                                    <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">SAÍDA</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        )}
 
-                        {/* 2. Nova Entrada */}
-                        <Animated.View style={{ opacity, transform: [{ translateY: incomeTransY }, { translateX: incomeTransX }], position: 'absolute', zIndex: 60 }}>
-                            <TouchableOpacity onPress={() => goToFinance('new_income')} className="items-center">
-                                <View className="w-12 h-12 bg-emerald-500 rounded-full items-center justify-center shadow-lg border border-white mb-1">
-                                    <TrendingUp size={20} color="white" />
-                                </View>
-                                <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">ENTRADA</Text>
-                            </TouchableOpacity>
-                        </Animated.View>
+                        {/* 2. Nova Entrada - Finance Only */}
+                        {(canViewFinancials || role === 'staff') && (
+                            <Animated.View style={{ opacity, transform: [{ translateY: incomeTransY }, { translateX: incomeTransX }], position: 'absolute', zIndex: 60 }}>
+                                <TouchableOpacity onPress={() => goToFinance('new_income')} className="items-center">
+                                    <View className="w-12 h-12 bg-emerald-500 rounded-full items-center justify-center shadow-lg border border-white mb-1">
+                                        <TrendingUp size={20} color="white" />
+                                    </View>
+                                    <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">ENTRADA</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        )}
 
-                        {/* 3. Create Match */}
-                        <Animated.View style={{ opacity, transform: [{ translateY: matchTransY }, { translateX: matchTransX }], position: 'absolute', zIndex: 60 }}>
-                            <TouchableOpacity onPress={() => { toggleMenu(); onNavigate('MatchDetails', { mode: 'create' }); }} className="items-center">
-                                <View className="w-14 h-14 bg-white rounded-full items-center justify-center shadow-lg border border-slate-100 mb-1">
-                                    <Trophy size={24} color="#00BFFF" />
-                                </View>
-                                <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">NOVO JOGO</Text>
-                            </TouchableOpacity>
-                        </Animated.View>
+                        {/* 3. Create Match - Coach/Owner */}
+                        {canManageMatches && (
+                            <Animated.View style={{ opacity, transform: [{ translateY: matchTransY }, { translateX: matchTransX }], position: 'absolute', zIndex: 60 }}>
+                                <TouchableOpacity onPress={() => { toggleMenu(); onNavigate('MatchDetails', { mode: 'create' }); }} className="items-center">
+                                    <View className="w-14 h-14 bg-white rounded-full items-center justify-center shadow-lg border border-slate-100 mb-1">
+                                        <Trophy size={24} color="#00BFFF" />
+                                    </View>
+                                    <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">NOVO JOGO</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        )}
 
-                        {/* 4. Create Player */}
-                        <Animated.View style={{ opacity, transform: [{ translateY: ghostTransY }, { translateX: ghostTransX }], position: 'absolute', zIndex: 60 }}>
-                            <TouchableOpacity onPress={() => { toggleMenu(); onNavigate('PlayerDetails', { mode: 'create' }); }} className="items-center">
-                                <View className="w-14 h-14 bg-white rounded-full items-center justify-center shadow-lg border border-slate-100 mb-1">
-                                    <UserPlus size={24} color="#006400" />
-                                </View>
-                                <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">ADD JOGADOR</Text>
-                            </TouchableOpacity>
-                        </Animated.View>
+                        {/* 4. Create Player - Coach/Owner/Staff */}
+                        {(canManageRoster || role === 'staff') && (
+                            <Animated.View style={{ opacity, transform: [{ translateY: ghostTransY }, { translateX: ghostTransX }], position: 'absolute', zIndex: 60 }}>
+                                <TouchableOpacity onPress={() => { toggleMenu(); onNavigate('PlayerDetails', { mode: 'create' }); }} className="items-center">
+                                    <View className="w-14 h-14 bg-white rounded-full items-center justify-center shadow-lg border border-slate-100 mb-1">
+                                        <UserPlus size={24} color="#006400" />
+                                    </View>
+                                    <Text className="text-white font-bold text-[10px] bg-slate-900/80 px-2 py-1 rounded-md overflow-hidden">ADD JOGADOR</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        )}
                     </View>
                 )}
 
@@ -147,9 +157,9 @@ export default function MainLayout({ onNavigate }: MainLayoutProps) {
                     <TabButton icon={Home} label="Dashboard" active={currentTab === 'Dashboard'} onPress={() => setCurrentTab('Dashboard')} />
                     <TabButton icon={Users} label="Elenco" active={currentTab === 'Elenco'} onPress={() => setCurrentTab('Elenco')} />
 
-                    {/* FAB Trigger - ONLY FOR ADMIN */}
+                    {/* FAB Trigger - ONLY FOR MANAGERS */}
                     <View className="-top-10 items-center justify-center p-2 z-50">
-                        {isAdmin ? (
+                        {hasAnyPermission ? (
                             <TouchableOpacity onPress={toggleMenu} activeOpacity={0.9}>
                                 <Animated.View style={{ transform: [{ rotate: rotation }] }} className="w-16 h-16 bg-[#006400] rounded-2xl items-center justify-center shadow-lg shadow-green-900/40 border-[6px] border-[#F8FAFC]">
                                     <Plus size={32} color="white" strokeWidth={3} />

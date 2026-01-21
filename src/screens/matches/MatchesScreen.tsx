@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
-import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { Match } from '@/types/models';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Calendar, MapPin, Plus, Clock } from 'lucide-react-native';
+import { MapPin, Clock } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
@@ -15,7 +14,6 @@ import { Badge } from '@/components/ui/Badge';
 
 export default function MatchesScreen({ navigation }: any) {
     const teamId = useTeamStore(state => state.teamId);
-    const { canManageMatches } = usePermissions();
 
     const [matches, setMatches] = useState<Match[]>([]);
     const [loading, setLoading] = useState(true);
@@ -55,9 +53,7 @@ export default function MatchesScreen({ navigation }: any) {
         return () => unsubscribe();
     }, [teamId, viewMode]);
 
-    const handleAddMatch = () => {
-        navigation.navigate('MatchDetails', { mode: 'create' });
-    };
+
 
     const renderItem = ({ item }: { item: Match }) => (
         <Card className="mb-4" onTouchEnd={() => navigation.navigate('MatchDetails', { matchId: item.id, mode: 'view' })}>
@@ -134,17 +130,7 @@ export default function MatchesScreen({ navigation }: any) {
                 }
             />
 
-            {canManageMatches && (
-                <TouchableOpacity
-                    className="absolute bottom-6 right-6 w-14 h-14 bg-[#006400] rounded-2xl items-center justify-center shadow-lg shadow-green-900/40 transform rotate-45"
-                    onPress={handleAddMatch}
-                    activeOpacity={0.8}
-                >
-                    <View className="transform -rotate-45">
-                        <Plus size={24} color="white" />
-                    </View>
-                </TouchableOpacity>
-            )}
+
         </View>
     );
 }

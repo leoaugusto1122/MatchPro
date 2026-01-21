@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Linking } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
-// import { usePermissions } from '@/hooks/usePermissions';
+import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
 import { doc, getDoc, addDoc, collection, updateDoc } from 'firebase/firestore';
 import { Player, Transaction } from '@/types/models';
@@ -17,8 +17,8 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
 
     // Simulação de permissão baseada na role
     // In a real scenario, use usePermissions hook or actual user role from store
-    const { currentRole, myPlayerProfile } = useTeamStore(state => state);
-    const canManage = ['owner', 'coach', 'staff'].includes(currentRole || 'player');
+    const { myPlayerProfile } = useTeamStore(state => state);
+    const { isStaff: canManage } = usePermissions();
 
     const { playerId, mode = 'view', isGhost = false } = route.params || {};
 
@@ -69,9 +69,9 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                             setName(data.name);
                             setPosition(data.position || 'MID');
                             setStatus(data.status || 'active');
-                            setIsAthlete(data.isAthlete !== undefined ? data.isAthlete : ((data as any).type === 'athlete' || !(data as any).type)); // Migration fallback
+                            setIsAthlete(data.isAthlete !== undefined ? data.isAthlete : true);
                             setRole(data.role || 'player');
-                            setIsStaff(['owner', 'coach', 'staff'].includes(data.role || 'player'));
+                            setIsStaff(data.isStaff || ['owner', 'coach', 'staff'].includes(data.role || 'player'));
                             setPaymentMode(data.paymentMode || (currentTeamMode === 'PER_GAME' ? 'per_game' : 'monthly'));
 
                             setOverallRating(data.overallRating || 0);
@@ -125,14 +125,27 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
 
         setLoading(true);
         try {
-            const finalRole = isStaff ? (role === 'owner' ? 'owner' : 'staff') : (role === 'owner' ? 'owner' : 'player');
+            // Validation: Must have at least one function
+            if (!isAthlete && !isStaff && role !== 'owner') {
+                Alert.alert("Atenção", "O usuário deve ser pelo menos Jogador ou Staff.");
+                setLoading(false);
+                return;
+            }
+
+            // Legacy Role Calculation (for backward compatibility)
+            // Owner > Staff > Player
+            let derivedRole = 'player';
+            if (role === 'owner') derivedRole = 'owner';
+            else if (isStaff) derivedRole = 'staff';
+            else if (isAthlete) derivedRole = 'player';
 
             const playerData: any = {
                 name,
                 position: isAthlete ? position : null,
                 status,
                 isAthlete,
-                role: finalRole,
+                isStaff, // Explicit Flag
+                role: derivedRole,
                 paymentMode,
                 ...(mode === 'create' ? { goals: 0, assists: 0, matchesPlayed: 0, overallRating: 80 } : {})
             };
@@ -172,6 +185,29 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
 
         const message = `Olá ${name}, você possui pendências no ${'Time'}:\n\n${pendingItems}\n\nTotal: R$ ${totalPending.toFixed(2)}`;
         Linking.openURL(`https://wa.me/?text=${encodeURIComponent(message)}`);
+    };
+
+    const handleConfirmPayment = (transaction: Transaction) => {
+        Alert.alert(
+            "Confirmar Recebimento",
+            `Deseja confirmar o recebimento de R$ ${transaction.amount.toFixed(2)}?\n\nIsso lançará uma entrada no caixa do time.`,
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Confirmar e Receber",
+                    onPress: async () => {
+                        try {
+                            if (!teamId) return;
+                            await TransactionService.markAsPaid(teamId, transaction.id);
+                            Alert.alert("Sucesso", "Pagamento recebido e registrado no caixa!");
+                        } catch (error) {
+                            Alert.alert("Erro", "Não foi possível processar o pagamento.");
+                            console.error(error);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const getPaymentModeLabel = (mode: string) => {
@@ -228,24 +264,36 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                     <ScrollView className="p-6">
                         {transactions.length > 0 ? (
                             transactions.map(t => (
-                                <Card key={t.id} className="mb-3 p-4 flex-row justify-between items-center border border-slate-100 shadow-sm">
-                                    <View className="flex-1">
-                                        <Text className="font-bold text-slate-800 text-xs uppercase">{t.description}</Text>
-                                        <Text className="text-[10px] text-slate-400 font-bold mt-1">
-                                            {t.date && t.date.seconds ? format(new Date(t.date.seconds * 1000), 'dd/MM/yyyy') : '-'}
-                                        </Text>
+                                <Card key={t.id} className="mb-3 p-4 border border-slate-100 shadow-sm">
+                                    <View className="flex-row justify-between items-start">
+                                        <View className="flex-1 mr-4">
+                                            <Text className="font-bold text-slate-800 text-xs uppercase">{t.description}</Text>
+                                            <Text className="text-[10px] text-slate-400 font-bold mt-1">
+                                                {t.date && t.date.seconds ? format(new Date(t.date.seconds * 1000), 'dd/MM/yyyy') : '-'}
+                                            </Text>
+                                        </View>
+                                        <View className="items-end">
+                                            <Text className={`font-black italic text-sm ${t.status === 'paid' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                R$ {t.amount.toFixed(2)}
+                                            </Text>
+                                            <Badge
+                                                label={t.status === 'paid' ? 'PAGO' : 'PENDENTE'}
+                                                color={t.status === 'paid' ? 'bg-emerald-100' : 'bg-red-100'}
+                                                textColor={t.status === 'paid' ? 'text-emerald-700' : 'text-red-700'}
+                                                className="mt-1"
+                                            />
+                                        </View>
                                     </View>
-                                    <View className="items-end">
-                                        <Text className={`font-black italic text-sm ${t.status === 'paid' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                            R$ {t.amount.toFixed(2)}
-                                        </Text>
-                                        <Badge
-                                            label={t.status === 'paid' ? 'PAGO' : 'PENDENTE'}
-                                            color={t.status === 'paid' ? 'bg-emerald-100' : 'bg-red-100'}
-                                            textColor={t.status === 'paid' ? 'text-emerald-700' : 'text-red-700'}
-                                            className="mt-1"
-                                        />
-                                    </View>
+
+                                    {t.status === 'pending' && canManage && (
+                                        <TouchableOpacity
+                                            onPress={() => handleConfirmPayment(t)}
+                                            className="mt-3 bg-emerald-50 py-2 rounded-lg border border-emerald-100 flex-row justify-center items-center active:bg-emerald-100"
+                                        >
+                                            <CheckCircle size={14} color="#059669" />
+                                            <Text className="text-emerald-700 font-black text-[10px] uppercase ml-2 tracking-wide">CONFIRMAR PAGAMENTO</Text>
+                                        </TouchableOpacity>
+                                    )}
                                 </Card>
                             ))
                         ) : (

@@ -68,6 +68,7 @@ export interface Player {
     status: 'active' | 'inactive'; // Changed from reserve to inactive
     userId?: string; // Optional: Link to Auth User
     authId?: string; // Legacy/Duplicate of userId
+    isStaff?: boolean; // Determines if they have staff permissions
     role?: 'owner' | 'coach' | 'staff' | 'player';
 
     // Stats (can be calculated or stored)
@@ -93,8 +94,18 @@ export interface Player {
     paymentMode?: 'monthly' | 'per_game' | 'exempt';
 
     // Ratings
-    fanRating?: number;
-    coachRating?: number;
+    fanRating?: number; // Legacy?
+    coachRating?: number; // Legacy?
+    totalCrowdVotes?: number;
+
+    // Ratings Aggregation
+    technicalRatingSum?: number;
+    technicalRatingCount?: number;
+    averageTechnicalRating?: number;
+
+    communityRatingSum?: number;
+    communityRatingCount?: number;
+    averageCommunityRating?: number;
 }
 
 
@@ -124,6 +135,7 @@ export interface Match {
         coachRatings?: Record<string, number>; // playerId -> score
         motm?: string; // playerId
         totalVotes: number;
+        crowdVoteCounts?: Record<string, number>; // playerId -> count
     };
 
     // Awards - Calculated on finalize
@@ -160,7 +172,7 @@ export interface MatchVote {
 
     // Votes
     ratings: Record<string, number>; // playerId -> 1-10
-    motmVote?: string; // playerId of the best player
+    bestPlayerVote?: string; // playerId of the best player
 
     createdAt: any;
     updatedAt: any;

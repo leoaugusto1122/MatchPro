@@ -147,7 +147,7 @@ export default function App() {
       case 'Loading': return <View className="flex-1 justify-center items-center"><ActivityIndicator size="large" color="#006400" /></View>;
       case 'Login': return <LoginScreen navigation={navigationProp} />;
       case 'Register': return <RegisterScreen navigation={navigationProp} />;
-      case 'ProfileSetup': return <ProfileSetupScreen navigation={navigationProp} />;
+      case 'ProfileSetup': return <ProfileSetupScreen />;
       case 'TeamSelection': return <TeamSelectionScreen navigation={navigationProp} />;
       case 'CreateTeam': return <CreateTeamScreen navigation={navigationProp} />;
       case 'JoinTeam': return <JoinTeamScreen route={routeProp} navigation={navigationProp} />;

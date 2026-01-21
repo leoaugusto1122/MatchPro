@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, ActivityIndicator, Text } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
-import { usePermissions } from '@/hooks/usePermissions';
 import { db } from '@/services/firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { Player } from '@/types/models';
@@ -57,9 +56,7 @@ export default function RosterScreen({ navigation }: any) {
         }
     }, [teamId]);
 
-    const handleAddPlayer = () => {
-        navigation.navigate('PlayerDetails', { mode: 'create' });
-    };
+
 
     const getPositionAbbr = (pos?: string) => {
         switch (pos) {

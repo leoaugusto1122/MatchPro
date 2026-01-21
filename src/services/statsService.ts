@@ -1,7 +1,6 @@
 import { db } from './firebase';
 import { doc, runTransaction, collection, getDocs } from 'firebase/firestore';
 import { Match, MatchEvent, Player, PresenceStatus, PlayerMatchStats } from '@/types/models';
-import { BillingService } from './billingService';
 import { TransactionService } from './transactionService';
 
 export const StatsService = {
@@ -161,6 +160,13 @@ export const StatsService = {
                     bestPlayerScore: bestPlayerScore,
                     crowdFavoriteId: crowdFavoriteId,
                     crowdFavoriteVotes: maxCrowdVotes
+                },
+                votingResults: {
+                    communityRatings: Object.fromEntries(
+                        Object.entries(communityRatings).map(([k, v]) => [k, v.total / v.count])
+                    ),
+                    crowdVoteCounts: crowdVotes,
+                    totalVotes: Object.values(crowdVotes).reduce((a, b) => a + b, 0)
                 }
             });
 
@@ -234,7 +240,8 @@ export const StatsService = {
                     averageTechnicalRating: avgTech,
                     communityRatingSum: commSum,
                     communityRatingCount: commCount,
-                    averageCommunityRating: avgComm
+                    averageCommunityRating: avgComm,
+                    totalCrowdVotes: (pData.totalCrowdVotes || 0) + (crowdVotes[p.id] || 0)
                 });
             }
         });
@@ -450,6 +457,11 @@ export const StatsService = {
 
                 // Let's just rollback basic stats for now.
 
+                // Ratings Rollback
+                const crowdVoteCounts = matchData.votingResults?.crowdVoteCounts || {};
+                const votesToRemove = crowdVoteCounts[p.id] || 0;
+                const updatedCrowdVotes = Math.max(0, (pData.totalCrowdVotes || 0) - votesToRemove);
+
                 transaction.update(p.ref, {
                     goals: updatedGoals,
                     assists: updatedAssists,
@@ -457,7 +469,8 @@ export const StatsService = {
                     goalParticipations: updatedParticipations,
                     averageGoalsPerMatch: avgGoals,
                     averageAssistsPerMatch: avgAssists,
-                    mvpScore
+                    mvpScore,
+                    totalCrowdVotes: updatedCrowdVotes
                 });
             }
 
