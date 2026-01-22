@@ -12,9 +12,11 @@ import FinanceScreen from '@/screens/finance/FinanceScreen';
 
 interface MainLayoutProps {
     onNavigate: (screen: string, params?: any) => void;
+    navigation?: any;
+    route?: any;
 }
 
-export default function MainLayout({ onNavigate }: MainLayoutProps) {
+export default function MainLayout({ onNavigate, navigation, route }: MainLayoutProps) {
     const { role, canManageMatches, canManageRoster, canViewFinancials } = usePermissions();
 
     // Determine if user has any management capability to show the FAB.
@@ -25,6 +27,13 @@ export default function MainLayout({ onNavigate }: MainLayoutProps) {
     const [financeParams, setFinanceParams] = useState<any>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const animation = useRef(new Animated.Value(0)).current;
+
+    // Handle Route Params for Tab Switching
+    useEffect(() => {
+        if (route?.params?.tab) {
+            setCurrentTab(route.params.tab);
+        }
+    }, [route?.params]);
 
     // Reset finance params when leaving tab or after use
     useEffect(() => {
@@ -67,13 +76,20 @@ export default function MainLayout({ onNavigate }: MainLayoutProps) {
         toggleMenu();
     };
 
+    const navProxy = {
+        navigate: onNavigate,
+        openDrawer: navigation?.openDrawer,
+        closeDrawer: navigation?.closeDrawer,
+        toggleDrawer: navigation?.toggleDrawer
+    };
+
     const renderContent = () => {
         switch (currentTab) {
-            case 'Dashboard': return <HomeScreen navigation={{ navigate: onNavigate }} onTabChange={setCurrentTab} />;
-            case 'Elenco': return <RosterScreen navigation={{ navigate: onNavigate }} />;
-            case 'Partidas': return <MatchesScreen navigation={{ navigate: onNavigate }} />;
+            case 'Dashboard': return <HomeScreen navigation={navProxy} onTabChange={setCurrentTab} />;
+            case 'Elenco': return <RosterScreen navigation={navProxy} />;
+            case 'Partidas': return <MatchesScreen navigation={navProxy} />;
             case 'Financeiro': return <FinanceScreen route={{ params: financeParams }} />;
-            default: return <HomeScreen navigation={{ navigate: onNavigate }} onTabChange={setCurrentTab} />;
+            default: return <HomeScreen navigation={navProxy} onTabChange={setCurrentTab} />;
         }
     };
 

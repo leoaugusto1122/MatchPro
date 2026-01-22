@@ -3,7 +3,7 @@ import { View, TouchableOpacity, Text, TextInput, KeyboardAvoidingView, Platform
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth, db } from '@/services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import { User, Mail, Lock, ChevronLeft } from 'lucide-react-native';
+import { User, Mail, Lock, ChevronLeft, Eye, EyeOff } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
@@ -14,6 +14,7 @@ export default function RegisterScreen({ navigation }: any) {
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [secureTextEntry, setSecureTextEntry] = useState(true);
 
     const handleRegister = async () => {
         if (!name || !email || !password) {
@@ -100,10 +101,13 @@ export default function RegisterScreen({ navigation }: any) {
                                 className="flex-1 ml-3 h-12 text-slate-900 font-bold"
                                 value={password}
                                 onChangeText={setPassword}
-                                secureTextEntry
+                                secureTextEntry={secureTextEntry}
                                 placeholder="••••••"
                                 placeholderTextColor="#CBD5E1"
                             />
+                            <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)}>
+                                {secureTextEntry ? <Eye size={20} color="#94A3B8" /> : <EyeOff size={20} color="#94A3B8" />}
+                            </TouchableOpacity>
                         </View>
                     </View>
 

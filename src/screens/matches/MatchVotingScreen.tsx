@@ -5,6 +5,7 @@ import { db } from '@/services/firebase';
 import { doc, getDoc, Timestamp, setDoc } from 'firebase/firestore';
 import { Match, Player } from '@/types/models';
 import { ChevronLeft, Send } from 'lucide-react-native';
+import { AlertService } from '@/services/alertService';
 
 export default function MatchVotingScreen({ route, navigation }: any) {
     const { matchId } = route.params;
@@ -134,6 +135,11 @@ export default function MatchVotingScreen({ route, navigation }: any) {
             };
 
             await setDoc(doc(db, 'teams', teamId, 'matches', matchId, 'votes', myPlayerProfile.userId), voteDocData);
+
+            // Resolve Alert immediately
+            const alertId = `vote_${matchId}_${myPlayerProfile.userId}`;
+            await AlertService.resolveAlert(teamId, alertId);
+
             Alert.alert("Sucesso", "Votos enviados! Obrigado.");
             navigation.goBack();
         } catch (e) {

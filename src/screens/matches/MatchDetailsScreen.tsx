@@ -10,6 +10,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { StatsService } from '@/services/statsService';
+import { AlertService } from '@/services/alertService';
 import {
     Calendar, MapPin, Trophy, Target,
     CheckCircle2, XCircle,
@@ -293,6 +294,13 @@ export default function MatchDetailsScreen({ route, navigation }: any) {
                     timestamp: new Date()
                 }
             });
+
+            // Resolve Alert immediately
+            if (myPlayerProfile.userId) {
+                const alertId = `presence_${match.id}_${myPlayerProfile.userId}`;
+                await AlertService.resolveAlert(teamId, alertId);
+            }
+
         } catch (e) {
             console.error(e);
             Alert.alert('Erro', 'Falha ao atualizar presença.');

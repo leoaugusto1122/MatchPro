@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/services/firebase';
@@ -9,11 +9,11 @@ import { User } from 'lucide-react-native';
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 
-export default function ProfileSetupScreen() {
-    const { authUser, setUserData } = useAuthStore();
-    const [name, setName] = useState(authUser?.displayName || '');
-    const [nickname, setNickname] = useState('');
-    const [preferredFoot, setPreferredFoot] = useState('Destro');
+export default function ProfileSetupScreen({ navigation }: any) {
+    const { authUser, user, setUserData } = useAuthStore();
+    const [name, setName] = useState(user?.displayName || authUser?.displayName || '');
+    const [nickname, setNickname] = useState(user?.nickname || '');
+    const [preferredFoot, setPreferredFoot] = useState((user as any)?.preferredFoot || 'Destro');
     const role = 'owner'; // Default role, specific team roles handled later
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -64,12 +64,27 @@ export default function ProfileSetupScreen() {
             // Update Store
             setUserData(userData as any);
 
+            Alert.alert("Sucesso", "Perfil atualizado com sucesso!", [
+                {
+                    text: "OK",
+                    onPress: () => {
+                        if (navigation && navigation.goBack) {
+                            navigation.goBack();
+                        }
+                    }
+                }
+            ]);
+
         } catch (e: any) {
             console.error(e);
             setError('Erro ao salvar perfil. Tente novamente.');
         } finally {
             setLoading(false);
         }
+
+        // Success Logic outside try/catch/finally to avoid unmounted component issues if needed, or keeping simple
+        // If userData was set correctly, we can proceed.
+        // We'll show an Alert.
     };
 
     return (

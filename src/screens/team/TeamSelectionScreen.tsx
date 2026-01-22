@@ -14,21 +14,39 @@ export default function TeamSelectionScreen({ navigation }: any) {
     const { setTeamContext } = useTeamStore();
     const [teams, setTeams] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [checkingIntent, setCheckingIntent] = useState(true);
 
     useEffect(() => {
-        const checkPendingInvite = async () => {
+        const checkPendingActions = async () => {
             try {
+                // 1. Check for Pending Invites (Deep Link or stored invite)
                 const pending = await AsyncStorage.getItem('pendingInvite');
                 if (pending) {
                     const { team, token } = JSON.parse(pending);
-                    await AsyncStorage.removeItem('pendingInvite'); // Clear it
+                    await AsyncStorage.removeItem('pendingInvite');
                     navigation.navigate('JoinTeam', { teamId: team, token });
+                    return;
                 }
+
+                // 2. Check for User Intent (Selection from Welcome Screen)
+                const intent = await AsyncStorage.getItem('@matchpro:user_intent');
+                if (intent === 'CREATE_TEAM') {
+                    await AsyncStorage.removeItem('@matchpro:user_intent');
+                    navigation.navigate('CreateTeam', { initialMode: 'create' });
+                    return;
+                } else if (intent === 'JOIN_TEAM') {
+                    await AsyncStorage.removeItem('@matchpro:user_intent');
+                    navigation.navigate('JoinTeam'); // Defaults to input-code view
+                    return;
+                }
+
             } catch (e) {
                 console.error(e);
+            } finally {
+                setCheckingIntent(false);
             }
         };
-        checkPendingInvite();
+        checkPendingActions();
     }, []);
 
     useEffect(() => {
@@ -116,7 +134,7 @@ export default function TeamSelectionScreen({ navigation }: any) {
     const ownerTeams = teams.filter(t => t.role === 'owner');
     const playerTeams = teams.filter(t => t.role !== 'owner');
 
-    if (loading) {
+    if (loading || checkingIntent) {
         return (
             <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
                 <ActivityIndicator size="large" color="#006400" />

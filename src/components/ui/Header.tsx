@@ -1,20 +1,31 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
+import { ChevronLeft } from 'lucide-react-native';
 
-export const Header = ({ title, subtitle, initials, rightComponent }: { title?: string, subtitle?: string, initials?: string, rightComponent?: React.ReactNode }) => (
-    <View className="flex-row justify-between items-center mb-6 pt-4">
-        <View>
-            <Text className="text-2xl font-black italic tracking-tighter text-slate-900">
-                {title || 'MATCHPRO'}<Text className="text-[#006400]">.</Text>
-            </Text>
-            <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em]">
-                {subtitle || 'Elite Club Manager'}
-            </Text>
-        </View>
-        {rightComponent ? rightComponent : (
-            <View className="w-10 h-10 rounded-2xl bg-slate-900 justify-center items-center">
-                <Text className="text-white font-black italic">{initials || 'CP'}</Text>
+export const Header = ({ title, subtitle, rightComponent, showBack, onBack, leftComponent }: { title?: string, subtitle?: string, rightComponent?: React.ReactNode, showBack?: boolean, onBack?: () => void, leftComponent?: React.ReactNode }) => {
+    return (
+        <View className="flex-row justify-between items-center mb-2">
+            <View className="flex-row items-center flex-1">
+                {leftComponent && (
+                    <View className="mr-4">
+                        {leftComponent}
+                    </View>
+                )}
+                {showBack && (
+                    <TouchableOpacity onPress={onBack} className="mr-3 p-1 -ml-1">
+                        <ChevronLeft size={28} color="#0F172A" />
+                    </TouchableOpacity>
+                )}
+                <View className="flex-1 justify-center">
+                    <Text className="text-xl font-black italic tracking-tighter text-slate-900 leading-6" numberOfLines={1}>
+                        {title || 'MATCHPRO'}
+                    </Text>
+                    <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        {subtitle || 'Manager'}
+                    </Text>
+                </View>
             </View>
-        )}
-    </View>
-);
+            {rightComponent}
+        </View>
+    );
+};

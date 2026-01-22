@@ -65,7 +65,7 @@ export interface Player {
     photoURL?: string;
     position?: 'GK' | 'DEF' | 'MID' | 'FWD';
     dominantFoot?: 'Destro' | 'Canhoto' | 'Ambidestro';
-    status: 'active' | 'inactive'; // Changed from reserve to inactive
+    status: 'active' | 'inactive' | 'expelled'; // Changed from reserve to inactive, added expelled
     userId?: string; // Optional: Link to Auth User
     authId?: string; // Legacy/Duplicate of userId
     isStaff?: boolean; // Determines if they have staff permissions
@@ -82,7 +82,7 @@ export interface Player {
     mvpScore?: number; // goalParticipations + averageGoalsPerMatch
 
     // Legacy mapping if needed
-    email?: string;
+    email?: string; // Normalized email for banning/lookup
 
     // Financial Summary
     financialSummary?: {
@@ -205,4 +205,42 @@ export interface Transaction {
     paidAt?: any;
     createdAt?: any;
     createdBy?: string;
+}
+
+export interface MemberHistory {
+    id: string;
+    teamId: string;
+    playerId?: string;
+    userId?: string;
+    playerName: string;
+    action: 'JOIN' | 'LEAVE' | 'KICK' | 'REINTEGRATE';
+    performedBy?: string; // userId of owner (if KICK)
+    performedByName?: string;
+    createdAt: any; // Firestore Timestamp
+}
+
+export type AlertType = 'CONFIRM_PRESENCE' | 'VOTE_MATCH' | 'PAYMENT_PENDING' | 'TEAM_EVENT' | 'SYSTEM';
+export type AlertSeverity = 'info' | 'warning' | 'critical';
+export type AlertStatus = 'pending' | 'resolved' | 'dismissed';
+
+export interface Alert {
+    id: string;
+    userId: string;          // Quem recebe o alerta
+    teamId: string;          // Time relacionado
+    type: AlertType;
+    title: string;           // Texto curto
+    message: string;         // Descrição clara
+    relatedEntity?: {
+        type: 'match' | 'payment' | 'team';
+        id: string;
+    };
+    severity: AlertSeverity;
+    status: AlertStatus;
+    action?: {
+        label: string;         // Ex: "Confirmar presença"
+        screen: string;        // Ex: MatchDetails
+        params?: any;
+    };
+    createdAt: any; // Timestamp
+    resolvedAt?: any; // Timestamp
 }

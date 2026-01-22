@@ -10,6 +10,7 @@ import { CheckCircle2, Trophy, ArrowLeft, Hash, Shield, User as UserIcon } from 
 import { Team } from '@/types/models';
 import { Header } from '@/components/ui/Header';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MemberService } from '@/services/memberService';
 
 export default function JoinTeamScreen({ route, navigation }: any) {
     // const route = useRoute<any>(); // Removed
@@ -192,19 +193,52 @@ export default function JoinTeamScreen({ route, navigation }: any) {
                 }
             }
 
-            // 2. Create Player Profile (Subcollection)
+            // 2. Create or Update Player Profile
             const playersRef = collection(db, 'teams', teamId, 'players');
-            // Check if player profile already exists (idempotency)
-            const qPlayer = query(playersRef, where('authId', '==', authUser.uid));
-            const existingPlayer = await getDocs(qPlayer);
+
+            // Strategy: Identify by AuthID -> Email -> Create New
+            let playerDoc = null;
+
+            // A. Check by AuthID
+            const qAuth = query(playersRef, where('authId', '==', authUser.uid));
+            const snapAuth = await getDocs(qAuth);
+            if (!snapAuth.empty) playerDoc = snapAuth.docs[0];
+
+            // B. Check by Email (if not found by AuthID)
+            if (!playerDoc && authUser.email) {
+                // Try exact match first
+                const qEmail = query(playersRef, where('email', '==', authUser.email));
+                const snapEmail = await getDocs(qEmail);
+                if (!snapEmail.empty) playerDoc = snapEmail.docs[0];
+            }
+
+            // --- REJECTION RULE: EXPELLED ---
+            if (playerDoc) {
+                const pData = playerDoc.data();
+                if (pData.status === 'expelled') {
+                    setStep('error');
+                    setMessage("Você não pode fazer parte desta equipe no momento.\nEntre em contato com o administrador do time.");
+                    return;
+                }
+            }
+            // --------------------------------
 
             let playerRefId = '';
             let finalPlayerData = null;
 
-            if (!existingPlayer.empty) {
-                const pDoc = existingPlayer.docs[0];
-                playerRefId = pDoc.id;
-                finalPlayerData = pDoc.data();
+            if (playerDoc) {
+                // Link existing ghost or return user
+                playerRefId = playerDoc.id;
+                finalPlayerData = playerDoc.data();
+
+                // Ensure AuthID is linked if it wasn't
+                if (!finalPlayerData.authId) {
+                    await updateDoc(doc(playersRef, playerRefId), {
+                        authId: authUser.uid,
+                        userId: authUser.uid, // Ensure legacy support
+                        email: authUser.email // Update email just in case
+                    });
+                }
             } else {
                 const newPlayer = {
                     name: user?.displayName || authUser.displayName || nickname,
@@ -212,6 +246,7 @@ export default function JoinTeamScreen({ route, navigation }: any) {
                     position: position,
                     dominantFoot: dominantFoot,
                     authId: authUser.uid,
+                    email: authUser.email, // Save email for future matching
                     role: 'player',
                     status: 'active',
                     goals: 0,
@@ -248,6 +283,14 @@ export default function JoinTeamScreen({ route, navigation }: any) {
             'player',
             playerProfile
         );
+
+        // LOG JOIN EVENT
+        MemberService.logEvent(teamData!.id, 'JOIN', {
+            id: playerProfile.id,
+            name: playerProfile.name,
+            userId: playerProfile.userId || playerProfile.authId
+        }).catch(err => console.error("Failed to log join:", err));
+
         setStep('success');
         setMessage(`BEM-VINDO AO ELENCO!`);
         setTimeout(() => {

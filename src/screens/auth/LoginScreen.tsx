@@ -4,7 +4,7 @@ import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithCredential } 
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { auth } from '@/services/firebase';
-import { Mail, Lock, ChevronRight } from 'lucide-react-native';
+import { Mail, Lock, ChevronRight, Eye, EyeOff } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
@@ -12,10 +12,11 @@ import { ButtonPrimary } from '@/components/ui/ButtonPrimary';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen({ navigation }: any) {
-    const [email, setEmail] = useState('teste@gmail.com');
-    const [password, setPassword] = useState('123456');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [secureTextEntry, setSecureTextEntry] = useState(true);
 
     const [request, response, promptAsync] = Google.useAuthRequest({
         clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
@@ -109,10 +110,13 @@ export default function LoginScreen({ navigation }: any) {
                                 className="flex-1 ml-3 h-12 text-slate-900 font-bold"
                                 value={password}
                                 onChangeText={setPassword}
-                                secureTextEntry
+                                secureTextEntry={secureTextEntry}
                                 placeholder="••••••"
                                 placeholderTextColor="#CBD5E1"
                             />
+                            <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)}>
+                                {secureTextEntry ? <Eye size={20} color="#94A3B8" /> : <EyeOff size={20} color="#94A3B8" />}
+                            </TouchableOpacity>
                         </View>
                     </View>
 

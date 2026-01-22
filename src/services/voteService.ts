@@ -86,7 +86,7 @@ export const VoteService = {
             playerId: voterPlayerId,
             matchId,
             ratings,
-            motmVote: motmVote || undefined,
+            bestPlayerVote: motmVote || undefined,
             createdAt: Timestamp.now(),
             updatedAt: Timestamp.now()
         };

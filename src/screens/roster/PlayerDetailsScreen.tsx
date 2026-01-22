@@ -6,6 +6,7 @@ import { db } from '@/services/firebase';
 import { doc, getDoc, addDoc, collection, updateDoc } from 'firebase/firestore';
 import { Player, Transaction } from '@/types/models';
 import { TransactionService } from '@/services/transactionService';
+import { MemberService } from '@/services/memberService';
 import { format } from 'date-fns';
 import { ChevronLeft, User, Activity, DollarSign, Target, Trophy, Edit3, CheckCircle, XCircle, Share2, Receipt } from 'lucide-react-native';
 
@@ -27,6 +28,7 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
     const [name, setName] = useState('');
     const [position, setPosition] = useState('MID');
     const [status, setStatus] = useState('active');
+    const [playerUserId, setPlayerUserId] = useState<string | undefined>(undefined);
     const [isAthlete, setIsAthlete] = useState(true);
     const [isStaff, setIsStaff] = useState(false);
     const [role, setRole] = useState<'owner' | 'coach' | 'staff' | 'player'>('player');
@@ -72,6 +74,7 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                             setIsAthlete(data.isAthlete !== undefined ? data.isAthlete : true);
                             setRole(data.role || 'player');
                             setIsStaff(data.isStaff || ['owner', 'coach', 'staff'].includes(data.role || 'player'));
+                            setPlayerUserId(data.userId || data.authId);
                             setPaymentMode(data.paymentMode || (currentTeamMode === 'PER_GAME' ? 'per_game' : 'monthly'));
 
                             setOverallRating(data.overallRating || 0);
@@ -210,6 +213,41 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
         );
     };
 
+    const handleReintegrate = async () => {
+        if (!teamId || !playerId || !myPlayerProfile) return;
+
+        Alert.alert(
+            "Reintegrar Jogador",
+            "Deseja reintegrar este jogador ao time? Ele terá o status restaurado para ATIVO.",
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Reintegrar",
+                    onPress: async () => {
+                        try {
+                            setLoading(true);
+                            await MemberService.reintegrateMember(teamId, {
+                                id: playerId,
+                                name,
+                                userId: playerUserId
+                            } as Player, {
+                                id: myPlayerProfile.id,
+                                name: myPlayerProfile.name
+                            });
+                            setStatus('active');
+                            Alert.alert("Sucesso", "Jogador reintegrado ao time.");
+                        } catch (e) {
+                            console.error(e);
+                            Alert.alert("Erro", "Falha ao reintegrar jogador.");
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const getPaymentModeLabel = (mode: string) => {
         switch (mode) {
             case 'monthly': return 'Mensalista';
@@ -313,8 +351,8 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                             <Text className="ml-1 font-black italic text-slate-400 uppercase tracking-widest text-[10px]">Atletas</Text>
                         </TouchableOpacity>
 
-                        {/* Edit Button */}
-                        {canManage && !isEditing && mode !== 'create' && (
+                        {/* Edit Button - Disabled if Expelled */}
+                        {canManage && !isEditing && mode !== 'create' && status !== 'expelled' && (
                             <TouchableOpacity onPress={() => setIsEditing(true)} className="bg-slate-100 p-2 rounded-full">
                                 <Edit3 size={16} color="#475569" />
                             </TouchableOpacity>
@@ -337,7 +375,11 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                             </Text>
                             <View className="flex-row gap-2 mt-2">
                                 <Badge label={position} color="bg-blue-50" textColor="text-blue-600" />
-                                <Badge label={status === 'active' ? 'ATIVO' : 'INATIVO'} color={status === 'active' ? 'bg-emerald-50' : 'bg-slate-100'} textColor={status === 'active' ? 'text-emerald-700' : 'text-slate-500'} />
+                                {status === 'expelled' ? (
+                                    <Badge label="EXPULSO" color="bg-red-100" textColor="text-red-700" />
+                                ) : (
+                                    <Badge label={status === 'active' ? 'ATIVO' : 'INATIVO'} color={status === 'active' ? 'bg-emerald-50' : 'bg-slate-100'} textColor={status === 'active' ? 'text-emerald-700' : 'text-slate-500'} />
+                                )}
                             </View>
                         </View>
                         {overallRating > 0 && (
@@ -350,6 +392,30 @@ export default function PlayerDetailsScreen({ route, navigation }: any) {
                 </View>
 
                 <View className="px-6 gap-6">
+
+                    {/* Expelled Warning */}
+                    {status === 'expelled' && (
+                        <Card className="bg-red-50 border border-red-100 p-4 mb-2">
+                            <Text className="text-red-800 font-bold text-sm mb-1">JOGADOR EXPULSO</Text>
+                            <Text className="text-red-600 text-xs">
+                                Este jogador foi expulso do time. Os dados abaixo são apenas para consulta e não podem ser editados.
+                            </Text>
+                            {/* Reintegrate Button (Owner Only) */}
+                            {myPlayerProfile?.role === 'owner' && (
+                                <TouchableOpacity
+                                    onPress={handleReintegrate}
+                                    disabled={loading}
+                                    className="mt-4 bg-red-600 py-3 rounded-lg items-center shadow-sm active:bg-red-700"
+                                >
+                                    {loading ? (
+                                        <ActivityIndicator color="white" size="small" />
+                                    ) : (
+                                        <Text className="text-white font-black uppercase text-xs tracking-widest">REINTEGRAR JOGADOR</Text>
+                                    )}
+                                </TouchableOpacity>
+                            )}
+                        </Card>
+                    )}
 
                     {/* Stats & Ratings Grid (Visible to Everyone) */}
                     {!isEditing && (

@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { View, ScrollView, Alert, TouchableOpacity, Text, TextInput, Share, Image } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useTeamStore } from '@/stores/teamStore';
-import { doc, updateDoc, getDoc, collection, query, getDocs, deleteField, arrayRemove, deleteDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/services/firebase';
 import { Team, Player } from '@/types/models';
-import { ChevronLeft, DollarSign, Calendar, Wallet, LogOut, Copy, Share2, Users, Trash2, Hash, RefreshCw } from 'lucide-react-native';
+import { ChevronLeft, DollarSign, Calendar, Wallet, LogOut, Copy, Share2, Hash, RefreshCw } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
@@ -20,7 +20,6 @@ export default function TeamSettingsScreen({ navigation }: any) {
     // const { user } = useAuthStore();
 
     const [team, setTeam] = useState<Team | null>(null);
-    const [players, setPlayers] = useState<Player[]>([]);
 
     // Finance
     const [billingMode, setBillingMode] = useState<'PER_GAME' | 'MONTHLY' | 'MONTHLY_PLUS_GAME'>('PER_GAME');
@@ -48,13 +47,6 @@ export default function TeamSettingsScreen({ navigation }: any) {
                     if (data.monthlyAmount) setMonthlyAmount(data.monthlyAmount.toString());
                     if (data.billingDay) setBillingDay(data.billingDay.toString());
                 }
-
-                // Players List
-                const qPlayers = query(collection(db, 'teams', teamId, 'players'));
-                const playersSnap = await getDocs(qPlayers);
-                const list = playersSnap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
-                setPlayers(list);
-
             } catch (e) {
                 console.error("Error fetching team data", e);
             }
@@ -130,52 +122,6 @@ export default function TeamSettingsScreen({ navigation }: any) {
         );
     };
 
-    const handleKickPlayer = async (player: Player) => {
-        if (!team) return;
-
-        Alert.alert(
-            'Expulsar Jogador',
-            `Tem certeza que deseja remover ${player.nickname || player.name} do time? Essa ação não pode ser desfeita.`,
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                    text: 'Confirmar Expulsão',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setLoading(true);
-                        try {
-                            // 1. Remove from Team Members Map & Array
-                            const teamRef = doc(db, 'teams', team.id);
-
-                            // Prepare update object. If authId exists, use it to remove from map
-                            const updates: any = {
-                                memberIds: arrayRemove(player.userId || player.authId)
-                            };
-
-                            if (player.authId) {
-                                updates[`members.${player.authId}`] = deleteField();
-                            }
-
-                            await updateDoc(teamRef, updates);
-
-                            // 2. Delete Player Profile Document
-                            await deleteDoc(doc(db, 'teams', team.id, 'players', player.id));
-
-                            // Update UI
-                            setPlayers(prev => prev.filter(p => p.id !== player.id));
-                            Alert.alert('Removido', 'Jogador removido com sucesso.');
-
-                        } catch (error) {
-                            console.error(error);
-                            Alert.alert('Erro', 'Falha ao remover jogador.');
-                        } finally {
-                            setLoading(false);
-                        }
-                    }
-                }
-            ]
-        );
-    };
 
     const handleSaveFinance = async () => {
         if (!team || currentRole !== 'owner') return;
@@ -259,43 +205,6 @@ export default function TeamSettingsScreen({ navigation }: any) {
                     </Card>
                 )}
 
-                {/* Roster Management - Owner Only */}
-                {currentRole === 'owner' && (
-                    <Card className="p-0 overflow-hidden">
-                        <View className="p-6 border-b border-slate-100 flex-row justify-between items-center">
-                            <Text className="text-xs font-black italic text-slate-900 tracking-widest uppercase">Elenco ({players.length})</Text>
-                            <Users size={16} color="#94A3B8" />
-                        </View>
-                        <View className="p-2">
-                            {players.map((player) => (
-                                <View key={player.id} className="flex-row items-center justify-between p-3 border-b border-slate-50 last:border-0">
-                                    <View className="flex-row items-center flex-1">
-                                        <View className="w-10 h-10 bg-slate-100 rounded-full items-center justify-center mr-3">
-                                            {player.photoURL ? (
-                                                <Image source={{ uri: player.photoURL }} className="w-10 h-10 rounded-full" />
-                                            ) : (
-                                                <Text className="font-bold text-slate-500">{player.name?.substring(0, 2).toUpperCase()}</Text>
-                                            )}
-                                        </View>
-                                        <View>
-                                            <Text className="text-slate-900 font-bold text-sm" numberOfLines={1}>{player.nickname || player.name}</Text>
-                                            <Text className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{player.role === 'owner' ? 'Dono / Capitão' : 'Jogador'}</Text>
-                                        </View>
-                                    </View>
-
-                                    {player.role !== 'owner' && (
-                                        <TouchableOpacity
-                                            onPress={() => handleKickPlayer(player)}
-                                            className="p-2 bg-red-50 rounded-lg"
-                                        >
-                                            <Trash2 size={16} color="#EF4444" />
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                            ))}
-                        </View>
-                    </Card>
-                )}
 
                 {/* Finance Settings - Owner Only */}
                 {currentRole === 'owner' && (

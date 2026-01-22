@@ -29,6 +29,12 @@ service cloud.firestore {
       allow write: if request.auth.uid == userId; // User manages own doc
     }
 
+    // 1.1 Artifacts Users Profile (New Path)
+    match /artifacts/{appId}/users/{userId}/profile/data {
+        allow read: if isAuthenticated();
+        allow write: if request.auth.uid == userId;
+    }
+
     // 2. Teams Root
     match /teams/{teamId} {
       // Create: Authenticated users can create teams
@@ -110,6 +116,14 @@ service cloud.firestore {
 
           // Delete: NO ONE
           allow delete: if false;
+      }
+
+      // 7. Member History (Audit)
+      match /memberHistory/{eventId} {
+        allow read: if isTeamMember(getTeamData());
+        allow create: if isTeamMember(getTeamData());
+        allow update: if false;
+        allow delete: if false;
       }
     }
     

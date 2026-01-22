@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Text, Modal } from 'react-native';
 import { useTeamStore } from '@/stores/teamStore';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -8,23 +8,31 @@ import { Match, Player } from '@/types/models';
 import { TransactionService } from '@/services/transactionService';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Calendar, MapPin, TrendingUp, Trophy, Target, AlertCircle, ChevronRight, Settings, LogOut, Info, X } from 'lucide-react-native';
+import { Calendar, MapPin, TrendingUp, Trophy, Target, Info, X, Menu } from 'lucide-react-native';
 
 import { Header } from '@/components/ui/Header';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { useAlerts } from '@/hooks/useAlerts';
+import { DashboardAlertsSummary } from '@/components/alerts/DashboardAlertsSummary';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function HomeScreen({ navigation, onTabChange }: any) {
-    const { teamId, teamName, clearTeamContext, currentRole } = useTeamStore();
-    const { canManageTeam } = usePermissions();
+    const { teamId, teamName, currentRole } = useTeamStore();
+    const { canManageTeam, canManageRoster } = usePermissions();
+    const { counts: alertCounts, refreshAlerts } = useAlerts();
+    const insets = useSafeAreaInsets();
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
+    // Data State
+    const [financials, setFinancials] = useState({ collected: 0, pending: 0 });
     const [nextMatch, setNextMatch] = useState<Match | null>(null);
-    const [confirmedCount, setConfirmedCount] = useState(0);
     const [lastMatch, setLastMatch] = useState<Match | null>(null);
 
+    // Rankings State
     const [topScorers, setTopScorers] = useState<Player[]>([]);
     const [topAssists, setTopAssists] = useState<Player[]>([]);
     const [topParticipations, setTopParticipations] = useState<Player[]>([]);
@@ -32,138 +40,140 @@ export default function HomeScreen({ navigation, onTabChange }: any) {
     const [topRatedCrowd, setTopRatedCrowd] = useState<Player[]>([]);
     const [topRatedCoach, setTopRatedCoach] = useState<Player[]>([]);
 
-    const [financials, setFinancials] = useState({ pending: 0, collected: 0, balance: 0 });
     const [infoModal, setInfoModal] = useState<{ visible: boolean; title: string; description: string } | null>(null);
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         if (!teamId) return;
 
         try {
-            const now = new Date();
-
-            // 1. Next Match - Fetch a few to filter out finished ones client-side
-            const nextMatchQ = query(
-                collection(db, 'teams', teamId, 'matches'),
-                where('date', '>=', Timestamp.fromDate(now)),
-                orderBy('date', 'asc'),
-                limit(10)
-            );
-            const nextSnap = await getDocs(nextMatchQ);
-            let foundMatch = null;
-
-            if (!nextSnap.empty) {
-                // Find first that is NOT finished
-                const matches = nextSnap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Match));
-                foundMatch = matches.find(m => m.status !== 'finished') || null;
-
-                if (foundMatch) {
-                    setNextMatch(foundMatch);
-                    // Count confirmed
-                    const count = foundMatch.presence
-                        ? Object.values(foundMatch.presence).filter(p => p.status === 'confirmed').length
-                        : 0;
-                    setConfirmedCount(count);
-                } else {
-                    setNextMatch(null);
-                }
-            } else {
-                setNextMatch(null);
-            }
-
-            // 2. Last Match (Result)
-            // 2. Last Match (Result) - Fetch recent matches and find first finished one (Avoids Composite Index)
-            const lastMatchQ = query(
-                collection(db, 'teams', teamId, 'matches'),
-                orderBy('date', 'desc'),
-                limit(10)
-            );
-            const lastSnap = await getDocs(lastMatchQ);
-
-            if (!lastSnap.empty) {
-                const matches = lastSnap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Match));
-                const finished = matches.find(m => m.status === 'finished');
-                setLastMatch(finished || null);
-            } else {
-                setLastMatch(null);
-            }
-
-            // 3. Fetch All Active Players & Calculate Rankings In-Memory
-            // This avoids needing 7+ composite indexes in Firebase for a small dataset.
-            const playersQ = query(
-                collection(db, 'teams', teamId, 'players'),
-                where('status', '==', 'active')
-            );
-            const playersSnap = await getDocs(playersQ);
-            const allPlayers = playersSnap.docs.map(d => ({ ...d.data(), id: d.id } as Player));
-
-            // Helpers for sorting
-            const getTop = (field: keyof Player) => {
-                return [...allPlayers]
-                    .sort((a, b) => ((b[field] as number) || 0) - ((a[field] as number) || 0))
-                    .slice(0, 1);
-            };
-
-            setTopScorers(getTop('goals'));
-            setTopAssists(getTop('assists'));
-            setTopParticipations(getTop('goalParticipations'));
-            // setMostMatches(getTop('matchesPlayed')); // Removed
-            setMostVotedCrowd(getTop('totalCrowdVotes'));
-            setTopRatedCrowd(getTop('averageCommunityRating'));
-            setTopRatedCoach(getTop('averageTechnicalRating'));
-
-            // 5. Financial Summary (Owner/Coach only) using TransactionService
-            if (canManageTeam) {
-                // Trigger monthly check (Async, don't await blocking)
-                TransactionService.checkAndGenerateMonthlyTransactions(teamId).catch(console.error);
-
+            // 1. Financials
+            try {
                 const summary = await TransactionService.getSummary(teamId);
                 setFinancials({
                     collected: summary.income,
-                    pending: summary.pending,
-                    balance: summary.balance
+                    pending: summary.pending
                 });
+            } catch (e) {
+                console.error("Error fetching financials:", e);
             }
 
-        } catch (e) {
-            console.error("Error fetching dashboard data:", e);
+            // 2. Matches (Next and Last)
+            try {
+                const matchesRef = collection(db, 'teams', teamId, 'matches');
+                const now = Timestamp.now();
+
+                // Next Match
+                const qNext = query(matchesRef, where('date', '>=', now), orderBy('date', 'asc'), limit(1));
+                const nextSnap = await getDocs(qNext);
+                if (!nextSnap.empty) {
+                    setNextMatch({ id: nextSnap.docs[0].id, ...nextSnap.docs[0].data() } as Match);
+                } else {
+                    setNextMatch(null);
+                }
+
+                // Last Match
+                const qLast = query(matchesRef, where('date', '<', now), orderBy('date', 'desc'), limit(1));
+                const lastSnap = await getDocs(qLast);
+                if (!lastSnap.empty) {
+                    setLastMatch({ id: lastSnap.docs[0].id, ...lastSnap.docs[0].data() } as Match);
+                } else {
+                    setLastMatch(null);
+                }
+            } catch (e) {
+                console.error("Error fetching matches:", e);
+                // Fallback for query index errors
+                setNextMatch(null);
+                setLastMatch(null);
+            }
+
+            // 3. Rankings
+            try {
+                const playersRef = collection(db, 'teams', teamId, 'players');
+                const qPlayers = query(playersRef, where('status', '==', 'active'));
+                const playersSnap = await getDocs(qPlayers);
+                const players = playersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Player));
+
+                // Process Rankings locally
+                // Goals
+                const scorers = [...players].sort((a, b) => (b.goals || 0) - (a.goals || 0)).slice(0, 1);
+                setTopScorers(scorers[0]?.goals ? scorers : []);
+
+                // Assists
+                const assists = [...players].sort((a, b) => (b.assists || 0) - (a.assists || 0)).slice(0, 1);
+                setTopAssists(assists[0]?.assists ? assists : []);
+
+                // Participations (G+A)
+                const participations = [...players].sort((a, b) => ((b.goals || 0) + (b.assists || 0)) - ((a.goals || 0) + (a.assists || 0))).slice(0, 1);
+                // Add computed property for display
+                const topPart = participations.map(p => ({ ...p, goalParticipations: (p.goals || 0) + (p.assists || 0) }));
+                setTopParticipations(topPart[0]?.goalParticipations ? topPart : []);
+
+                // Crowd Votes
+                const voted = [...players].sort((a, b) => (b.totalCrowdVotes || 0) - (a.totalCrowdVotes || 0)).slice(0, 1);
+                setMostVotedCrowd(voted[0]?.totalCrowdVotes ? voted : []);
+
+                // Crowd Rating (Avg)
+                const ratingCrowd = [...players].filter(p => (p.averageCommunityRating || 0) > 0)
+                    .sort((a, b) => (b.averageCommunityRating || 0) - (a.averageCommunityRating || 0)).slice(0, 1);
+                setTopRatedCrowd(ratingCrowd);
+
+                // Coach Rating (Avg)
+                const ratingCoach = [...players].filter(p => (p.averageTechnicalRating || 0) > 0)
+                    .sort((a, b) => (b.averageTechnicalRating || 0) - (a.averageTechnicalRating || 0)).slice(0, 1);
+                setTopRatedCoach(ratingCoach);
+
+            } catch (e) {
+                console.error("Error fetching rankings:", e);
+            }
+
+        } catch (error) {
+            console.error("Error in dashboard fetch:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [teamId]);
 
     useEffect(() => {
         fetchData();
-    }, [teamId]);
+        refreshAlerts();
+    }, [fetchData, refreshAlerts]);
 
     const onRefresh = () => {
         setRefreshing(true);
         fetchData();
+        refreshAlerts();
     };
 
-    const safeFormatDate = (date: any, fmt: string) => {
+    const safeFormatDate = (timestamp: any, formatStr: string) => {
+        if (!timestamp) return '';
         try {
-            if (!date) return '';
-            const d = date.toDate ? date.toDate() : new Date(date);
-            if (isNaN(d.getTime())) return '';
-            return format(d, fmt, { locale: ptBR });
+            return format(timestamp.toDate(), formatStr, { locale: ptBR });
         } catch (e) {
             return '';
         }
     };
 
-    if (loading) {
-        return <View className="flex-1 justify-center items-center bg-[#F8FAFC]"><ActivityIndicator size="large" color="#006400" /></View>;
+    if (loading && !refreshing && !topScorers.length) { // Initial load
+        return (
+            <View className="flex-1 justify-center items-center bg-[#F8FAFC]">
+                <ActivityIndicator size="large" color="#006400" />
+            </View>
+        );
     }
 
     return (
         <View className="flex-1 bg-[#F8FAFC]">
-            <ScrollView
-                className="flex-1"
-                contentContainerStyle={{ paddingBottom: 100, paddingTop: 60, paddingHorizontal: 20 }}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#006400" />}
+            <View
+                className="px-6 pb-2 bg-[#F8FAFC] z-10"
+                style={{ paddingTop: Math.max(insets.top, 24) + 10 }}
             >
                 <Header
+                    leftComponent={
+                        <TouchableOpacity onPress={() => navigation.openDrawer && navigation.openDrawer()} className="p-2 mr-2 bg-white rounded-xl border border-slate-100 shadow-sm">
+                            <Menu size={24} color="#0F172A" />
+                        </TouchableOpacity>
+                    }
                     title={teamName?.toUpperCase() || "MEU TIME"}
                     subtitle={
                         currentRole === 'owner' ? 'Gestão do Clube' :
@@ -171,23 +181,14 @@ export default function HomeScreen({ navigation, onTabChange }: any) {
                                 currentRole === 'staff' ? 'Staff' :
                                     'Atuando como Jogador'
                     }
-                    rightComponent={
-                        <View className="flex-row items-center space-x-2">
-                            <TouchableOpacity
-                                onPress={clearTeamContext}
-                                className="w-10 h-10 rounded-2xl bg-red-50 border border-red-100 justify-center items-center shadow-sm mr-2"
-                            >
-                                <LogOut size={20} color="#EF4444" />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate('TeamSettings')}
-                                className="w-10 h-10 rounded-2xl bg-white border border-slate-100 justify-center items-center shadow-sm"
-                            >
-                                <Settings size={20} color="#0F172A" />
-                            </TouchableOpacity>
-                        </View>
-                    }
                 />
+            </View>
+
+            <ScrollView
+                className="flex-1"
+                contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#006400" />}
+            >
 
                 {/* Financial Summary */}
                 {canManageTeam && (
@@ -230,15 +231,11 @@ export default function HomeScreen({ navigation, onTabChange }: any) {
                 )}
 
                 {/* Alerts */}
-                {canManageTeam && confirmedCount < 5 && nextMatch && (
-                    <TouchableOpacity onPress={() => navigation.navigate('MatchDetails', { matchId: nextMatch.id })} className="mb-6 bg-orange-50 border border-orange-200 p-4 rounded-xl flex-row items-center">
-                        <AlertCircle color="#F97316" size={24} />
-                        <View className="ml-3 flex-1">
-                            <Text className="text-orange-800 font-bold text-xs uppercase tracking-wide">Atenção</Text>
-                            <Text className="text-orange-900 font-medium text-sm">Apenas {confirmedCount} confirmados para o jogo.</Text>
-                        </View>
-                        <ChevronRight color="#F97316" size={20} />
-                    </TouchableOpacity>
+                {(canManageTeam || canManageRoster) && (
+                    <DashboardAlertsSummary
+                        counts={alertCounts}
+                        onPress={() => navigation.navigate('Alerts')}
+                    />
                 )}
 
                 {/* Next Match */}
@@ -479,6 +476,6 @@ export default function HomeScreen({ navigation, onTabChange }: any) {
                     </View>
                 </View>
             </Modal>
-        </View>
+        </View >
     );
 }

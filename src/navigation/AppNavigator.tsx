@@ -11,9 +11,10 @@ import { useTeamStore } from '@/stores/teamStore';
 // Screens / Stacks
 import LoginScreen from '@/screens/auth/LoginScreen';
 import RegisterScreen from '@/screens/auth/RegisterScreen';
+import WelcomeScreen from '@/screens/auth/WelcomeScreen'; // New
 import ProfileSetupScreen from '@/screens/auth/ProfileSetupScreen'; // New Screen
 import CreateTeamScreen from '@/screens/team/CreateTeamScreen';
-import MainTabNavigator from '@/navigation/MainTabNavigator';
+import DrawerNavigator from '@/navigation/DrawerNavigator';
 import PlayerDetailsScreen from '@/screens/roster/PlayerDetailsScreen';
 import MatchDetailsScreen from '@/screens/matches/MatchDetailsScreen';
 import TeamSettingsScreen from '@/screens/team/TeamSettingsScreen';
@@ -21,12 +22,15 @@ import TeamSelectionScreen from '@/screens/team/TeamSelectionScreen';
 import JoinTeamScreen from '@/screens/team/JoinTeamScreen';
 import MatchSummaryScreen from '@/screens/matches/MatchSummaryScreen';
 import MatchVotingScreen from '@/screens/matches/MatchVotingScreen';
+import AlertsScreen from '@/screens/alerts/AlertsScreen';
+import TeamMembersScreen from '@/screens/team/TeamMembersScreen';
 
 const Stack = createNativeStackNavigator();
 
 function AuthStack() {
     return (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Welcome">
+            <Stack.Screen name="Welcome" component={WelcomeScreen} />
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
             <Stack.Screen name="JoinTeam" component={JoinTeamScreen} />
@@ -129,7 +133,7 @@ export default function AppNavigator() {
             ) : (
                 // Fully Authenticated
                 <>
-                    <Stack.Screen name="Main" component={MainTabNavigator} />
+                    <Stack.Screen name="Main" component={DrawerNavigator} />
                     <Stack.Screen
                         name="PlayerDetails"
                         component={PlayerDetailsScreen}
@@ -162,6 +166,16 @@ export default function AppNavigator() {
                     <Stack.Screen
                         name="JoinTeamInvite"
                         component={JoinTeamScreen}
+                    />
+                    <Stack.Screen
+                        name="Alerts"
+                        component={AlertsScreen}
+                        options={{ presentation: 'card' }}
+                    />
+                    <Stack.Screen
+                        name="TeamMembers"
+                        component={TeamMembersScreen}
+                        options={{ presentation: 'card' }}
                     />
                 </>
             )}
